@@ -1,20 +1,19 @@
 {
   "name": "subtitels-hamza",
   "version": "1.0.0",
-  "description": "Subtitle Hub — TMDb search + SubDL subtitle downloads",
+  "description": "Subtitle Hub — Netlify static + functions deployment",
   "type": "module",
-  "main": "server.js",
+  "main": "netlify/functions/health.js",
   "engines": {
     "node": ">=18.18"
   },
   "scripts": {
-    "start": "node server.js",
-    "dev": "node server.js"
+    "dev": "npx netlify dev",
+    "start": "npx netlify dev",
+    "build": "echo \"Static site - no build step\"",
+    "serve:static": "npx serve public"
   },
   "dependencies": {
-    "dotenv": "^17.3.1",
-    "ejs": "^5.0.1",
-    "express": "^5.2.1",
-    "express-ejs-layouts": "^2.5.1"
+    "dotenv": "^17.3.1"
   }
 }
