@@ -137,6 +137,13 @@ async function fetchSubtitles({ tmdbId, mediaType, language, provider, season, e
   return apiFetch(`/.netlify/functions/subtitles?${params.toString()}`);
 }
 
+async function fetchMediaDetails(tmdbId, mediaType) {
+  const params = new URLSearchParams();
+  params.set("tmdbId", String(tmdbId));
+  params.set("mediaType", mediaType);
+  return apiFetch(`/.netlify/functions/media-details?${params.toString()}`);
+}
+
 function renderHome() {
   appEl.innerHTML = `
     <section class="hero hero-card">
@@ -313,9 +320,8 @@ async function renderSearch(route) {
 }
 
 async function getMediaById(tmdbId, mediaType) {
-  const data = await fetchSearchMedia(tmdbId, mediaType, "");
-  const byId = (data.results || []).find((r) => String(r.tmdbId) === String(tmdbId) && r.mediaType === mediaType);
-  return byId || null;
+  const data = await fetchMediaDetails(tmdbId, mediaType);
+  return data.media || null;
 }
 
 function renderMediaForm(media, route) {
@@ -413,6 +419,10 @@ function renderMediaForm(media, route) {
 async function renderMedia(route) {
   appEl.innerHTML = `<div class="alert alert-info">جارٍ تحميل تفاصيل العمل...</div>`;
   try {
+    if (!/^\d+$/.test(String(route.tmdbId || ""))) {
+      appEl.innerHTML = `<div class="alert alert-error">معرّف TMDb غير صالح.</div>`;
+      return;
+    }
     const media = await getMediaById(route.tmdbId, route.mediaType);
     if (!media) {
       appEl.innerHTML = `<div class="alert alert-error">تعذر العثور على العمل المطلوب.</div>`;
@@ -433,6 +443,10 @@ function providerPillClass(provider) {
 }
 
 async function renderSubtitles(route) {
+  if (!/^\d+$/.test(String(route.tmdbId || ""))) {
+    appEl.innerHTML = `<div class="alert alert-error">معرّف TMDb غير صالح.</div>`;
+    return;
+  }
   const media =
     state.selectedMedia &&
     String(state.selectedMedia.tmdbId) === String(route.tmdbId) &&

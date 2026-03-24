@@ -1,6 +1,7 @@
 import {
   aggregateSubtitles,
   json,
+  logInfo,
   normalizeLanguageCode,
   normalizeProviderFilter,
   parseMediaType,
@@ -27,6 +28,15 @@ export async function handler(event) {
     const year = String(params.get("year") || "").trim();
     const provider = normalizeProviderFilter(params.get("provider"));
 
+    logInfo("subtitles called", {
+      hasTmdbId: Boolean(tmdbId),
+      mediaType,
+      language,
+      provider,
+      hasSeason: Boolean(season),
+      hasEpisode: Boolean(episode)
+    });
+
     if (!tmdbId) {
       return json(400, { ok: false, error: "tmdbId is required" });
     }
@@ -42,6 +52,10 @@ export async function handler(event) {
     });
 
     if (agg.allFailed) {
+      logInfo("subtitles all providers failed", {
+        provider,
+        errors: agg.providerErrors.length
+      });
       return json(502, {
         ok: false,
         error: "All subtitle providers failed",
@@ -49,6 +63,11 @@ export async function handler(event) {
       });
     }
 
+    logInfo("subtitles success", {
+      provider,
+      count: agg.subtitles.length,
+      providerErrors: agg.providerErrors.length
+    });
     return json(200, {
       ok: true,
       provider: agg.provider,

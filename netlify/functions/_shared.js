@@ -164,6 +164,29 @@ export async function searchMedia(query, type, year) {
     });
 }
 
+export async function getMediaDetailsById(mediaType, tmdbId) {
+  const path = mediaType === "tv" ? `/tv/${tmdbId}` : `/movie/${tmdbId}`;
+  const payload = await tmdbFetch(path, { language: "ar-SA" });
+  const date =
+    mediaType === "tv"
+      ? payload.first_air_date || ""
+      : payload.release_date || "";
+  return {
+    id: payload.id,
+    tmdbId: payload.id,
+    mediaType,
+    title:
+      mediaType === "tv"
+        ? payload.name || payload.original_name || "—"
+        : payload.title || payload.original_title || "—",
+    year: date ? String(date).slice(0, 4) : "",
+    overview: payload.overview || "",
+    poster: payload.poster_path
+      ? `https://image.tmdb.org/t/p/w500${payload.poster_path}`
+      : ""
+  };
+}
+
 function normalizeSubdlDownloadUrl(url) {
   const u = String(url || "").trim();
   if (!u) return "";

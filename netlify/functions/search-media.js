@@ -1,5 +1,6 @@
 import {
   json,
+  logInfo,
   parseSearchType,
   requireSearchConfig,
   searchMedia
@@ -21,11 +22,18 @@ export async function handler(event) {
     const type = parseSearchType(params.get("type"));
     const year = String(params.get("year") || "").trim();
 
+    logInfo("search-media called", {
+      hasQuery: Boolean(query),
+      type,
+      hasYear: Boolean(year)
+    });
+
     if (!query) {
       return json(400, { ok: false, error: "query is required" });
     }
 
     const results = await searchMedia(query, type, year);
+    logInfo("search-media success", { count: results.length, type });
     return json(200, { ok: true, results });
   } catch (error) {
     return json(500, {
