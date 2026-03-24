@@ -1,0 +1,73 @@
+<nav class="breadcrumb" aria-label="مسار التنقل">
+  <a href="/">الرئيسية</a>
+  ›
+  <a href="/search">البحث</a>
+  ›
+  <span><%= media.title %></span>
+</nav>
+
+<div class="card">
+  <div class="card-inner">
+    <div class="detail-layout">
+      <div>
+        <img
+          class="poster"
+          src="<%= media.poster || 'https://placehold.co/500x750/0d132b/eef3ff?text=No+Poster' %>"
+          alt=""
+        />
+      </div>
+      <div>
+        <div class="detail-meta">
+          <span class="pill"><%= media.mediaType === 'movie' ? 'فيلم' : 'مسلسل' %></span>
+          <span class="pill">TMDb <%= media.tmdbId %></span>
+          <% if (media.year) { %><span class="pill"><%= media.year %></span><% } %>
+        </div>
+        <h1 class="hero-title" style="font-size: clamp(1.7rem, 3vw, 2.2rem);"><%= media.title %></h1>
+        <p class="hero-subtitle" style="font-size: 15px; max-width: none; margin-top: 12px;"><%= media.overview || 'لا يوجد وصف.' %></p>
+
+        <div class="section-header" style="margin-top: 26px;">
+          <h2 class="section-title">خيارات الترجمة</h2>
+          <span class="section-sub">SubDL + OpenSubtitles</span>
+        </div>
+        <form method="get" action="/media/<%= media.mediaType %>/<%= media.tmdbId %>/subtitles" style="margin-top: 12px;">
+          <% if (media.year) { %>
+            <input type="hidden" name="year" value="<%= media.year %>" />
+          <% } %>
+          <div class="field">
+            <label for="language">لغة الترجمة</label>
+            <select id="language" name="language">
+              <option value="ar" <%= subtitleLanguage === 'ar' ? 'selected' : '' %>>العربية</option>
+              <option value="en" <%= subtitleLanguage === 'en' ? 'selected' : '' %>>English</option>
+              <option value="fr" <%= subtitleLanguage === 'fr' ? 'selected' : '' %>>French</option>
+              <option value="de" <%= subtitleLanguage === 'de' ? 'selected' : '' %>>German</option>
+              <option value="es" <%= subtitleLanguage === 'es' ? 'selected' : '' %>>Spanish</option>
+              <option value="tr" <%= subtitleLanguage === 'tr' ? 'selected' : '' %>>Turkish</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="provider">مزوّد الترجمة</label>
+            <select id="provider" name="provider">
+              <option value="all" <%= subtitleProvider === 'all' ? 'selected' : '' %>>الكل</option>
+              <option value="subdl" <%= subtitleProvider === 'subdl' ? 'selected' : '' %>>SubDL</option>
+              <option value="opensubtitles" <%= subtitleProvider === 'opensubtitles' ? 'selected' : '' %>>OpenSubtitles</option>
+            </select>
+          </div>
+          <% if (media.mediaType === 'tv') { %>
+            <div class="field">
+              <label for="season">الموسم</label>
+              <input id="season" name="season" value="<%= season %>" placeholder="1" inputmode="numeric" />
+            </div>
+            <div class="field">
+              <label for="episode">الحلقة</label>
+              <input id="episode" name="episode" value="<%= episode %>" placeholder="1" inputmode="numeric" />
+            </div>
+          <% } %>
+          <div class="row-actions" style="margin-top: 14px;">
+            <button type="submit">عرض الترجمات</button>
+            <a class="btn secondary" href="/search">عودة للبحث</a>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>

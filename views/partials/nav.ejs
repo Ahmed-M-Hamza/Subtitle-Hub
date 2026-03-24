@@ -1,0 +1,8 @@
+<header class="site-header">
+  <a class="brand" href="/"><%= appName %></a>
+  <nav class="nav-links" aria-label="التنقل الرئيسي">
+    <a href="/" class="<%= (typeof currentPath === 'string' && currentPath === '/') ? 'is-active' : '' %>">الرئيسية</a>
+    <a href="/search" class="<%= (typeof currentPath === 'string' && currentPath.startsWith('/search')) ? 'is-active' : '' %>">البحث</a>
+    <a href="/api/health" target="_blank" rel="noopener">الحالة</a>
+  </nav>
+</header>

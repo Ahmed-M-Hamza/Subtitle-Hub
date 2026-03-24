@@ -1,0 +1,75 @@
+<nav class="breadcrumb" aria-label="مسار التنقل">
+  <a href="/">الرئيسية</a>
+  ›
+  <a href="/search">البحث</a>
+  ›
+  <% if (media) { %>
+    <a href="/media/<%= mediaType %>/<%= tmdbId %>?year=<%= encodeURIComponent(year || media.year || '') %>"><%= media.title %></a>
+    ›
+  <% } %>
+  <span>الترجمات</span>
+</nav>
+
+<% if (typeof subtitlesError === 'string' && subtitlesError) { %>
+  <div class="alert alert-error" role="alert"><%= subtitlesError %></div>
+<% } %>
+<% if (providerErrors && providerErrors.length) { %>
+  <div class="alert alert-info" role="status">
+    بعض المزودين فشلوا:
+    <%= providerErrors.map(function (e) { return e.provider + ': ' + e.message; }).join(' | ') %>
+  </div>
+<% } %>
+
+<div class="card">
+  <div class="card-inner">
+    <div class="section-header" style="margin: 0 0 8px;">
+      <h1 class="section-title" style="font-size: 1.5rem;">نتائج الترجمة</h1>
+      <% if (subtitles && subtitles.length) { %>
+        <span class="pill">عدد النتائج: <%= subtitles.length %></span>
+      <% } %>
+    </div>
+    <% if (media) { %>
+      <p class="hint"><%= media.title %> — <%= mediaType === 'movie' ? 'فيلم' : 'مسلسل' %> — اللغة: <%= language %> — المزود: <%= provider %></p>
+    <% } else { %>
+      <p class="hint">TMDb <%= tmdbId %> — اللغة: <%= language %> — المزود: <%= provider %></p>
+    <% } %>
+    <div class="row-actions" style="margin-top: 14px;">
+      <% if (media) { %>
+        <a class="btn secondary" href="/media/<%= mediaType %>/<%= tmdbId %>?year=<%= encodeURIComponent(year || media.year || '') %>">← العودة للتفاصيل</a>
+      <% } else { %>
+        <a class="btn secondary" href="/search">← العودة للبحث</a>
+      <% } %>
+    </div>
+  </div>
+</div>
+
+<% if (subtitles && subtitles.length) { %>
+  <div class="sub-list" style="margin-top: 20px;">
+    <% subtitles.forEach(function (sub) { %>
+      <article class="sub-item">
+        <div class="sub-head">
+          <div>
+            <div class="sub-title"><%= sub.releaseName %></div>
+            <div class="hint">الرافع: <%= sub.author || 'غير معروف' %></div>
+          </div>
+          <span class="pill"><%= sub.language %><%= sub.hearingImpaired ? ' • HI' : '' %></span>
+        </div>
+        <div>
+          <span class="pill <%= sub.provider === 'subdl' ? 'provider-subdl' : (sub.provider === 'opensubtitles' ? 'provider-opensubtitles' : '') %>">
+            <%= sub.provider || 'unknown' %>
+          </span>
+        </div>
+        <% var rel = Array.isArray(sub.releases) && sub.releases.length ? sub.releases.slice(0, 5).join('، ') : '—'; %>
+        <div class="hint">الإصدارات: <%= rel %></div>
+        <% if (sub.comment) { %>
+          <div class="hint">ملاحظة: <%= sub.comment %></div>
+        <% } %>
+        <div class="row-actions">
+          <a class="btn" href="<%= sub.downloadUrl %>" target="_blank" rel="noopener noreferrer">تحميل</a>
+        </div>
+      </article>
+    <% }); %>
+  </div>
+<% } else if (!subtitlesError) { %>
+  <p class="empty" style="margin-top: 24px;">لا توجد ترجمات بهذه الإعدادات.</p>
+<% } %>

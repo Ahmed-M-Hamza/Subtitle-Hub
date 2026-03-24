@@ -1,0 +1,94 @@
+<section class="hero hero-card">
+  <span class="badge">مرحلة 1: اختيار العمل</span>
+  <h1 class="hero-title">ابحث عن فيلم أو مسلسل</h1>
+  <p class="hero-subtitle">نتائج البحث تُعرض كبطاقات واضحة، ثم تنتقل مباشرة إلى صفحة تفاصيل العمل والخيارات المتقدمة للترجمة.</p>
+</section>
+
+<% if (typeof searchError === 'string' && searchError) { %>
+  <div class="alert alert-error" role="alert"><%= searchError %></div>
+<% } %>
+
+<% if (typeof configHint === 'string' && configHint) { %>
+  <div class="alert alert-info" role="status"><%= configHint %></div>
+<% } %>
+
+<section class="search-layout">
+  <aside class="card filter-panel">
+    <div class="card-inner">
+      <div class="card-title-row">
+        <h2 class="title-h2">فلاتر البحث</h2>
+        <span class="title-meta">TMDb</span>
+      </div>
+      <form method="get" action="/search" class="form-grid">
+        <div class="field">
+          <label for="query">اسم الفيلم أو المسلسل</label>
+          <input id="query" name="query" value="<%= query %>" placeholder="مثال: Interstellar" required />
+        </div>
+        <div class="form-grid two-col">
+          <div class="field">
+            <label for="type">النوع</label>
+            <select id="type" name="type">
+              <option value="multi" <%= searchType === 'multi' ? 'selected' : '' %>>الكل</option>
+              <option value="movie" <%= searchType === 'movie' ? 'selected' : '' %>>فيلم</option>
+              <option value="tv" <%= searchType === 'tv' ? 'selected' : '' %>>مسلسل</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="year">السنة</label>
+            <input id="year" name="year" value="<%= year %>" placeholder="2014" inputmode="numeric" />
+          </div>
+        </div>
+        <div class="row-actions">
+          <button type="submit">بحث</button>
+          <a class="btn secondary" href="/search">مسح</a>
+        </div>
+      </form>
+      <p class="footer-note">
+        إذا كان العمل مسلسلًا، ستُتاح لاحقًا حقول الموسم والحلقة في صفحة التفاصيل.
+      </p>
+    </div>
+  </aside>
+
+  <section>
+    <div class="section-header">
+      <div>
+        <h2 class="section-title">نتائج البحث</h2>
+        <p class="section-sub">
+          <% if (query) { %>
+            <span>تم البحث عن: "<%= query %>"</span>
+          <% } else { %>
+            <span>ابدأ البحث لعرض النتائج هنا.</span>
+          <% } %>
+        </p>
+      </div>
+      <% if (results && results.length) { %>
+        <span class="pill">عدد النتائج: <%= results.length %></span>
+      <% } %>
+    </div>
+
+    <% if (results && results.length) { %>
+      <div class="media-grid">
+        <% results.forEach(function (item) { %>
+          <article class="media-card">
+            <a href="/media/<%= item.mediaType %>/<%= item.tmdbId %>?year=<%= encodeURIComponent(item.year || '') %>">
+              <img class="poster" src="<%= item.poster || 'https://placehold.co/500x750/0d132b/eef3ff?text=No+Poster' %>" alt="" />
+              <div class="media-body">
+                <h3 class="media-title"><%= item.title %></h3>
+                <div class="meta">
+                  <span class="pill"><%= item.mediaType === 'movie' ? 'فيلم' : 'مسلسل' %></span>
+                  <span><%= item.year || '—' %></span>
+                  <span>TMDb <%= item.tmdbId %></span>
+                </div>
+                <p class="overview"><%= item.overview ? (item.overview.length > 160 ? item.overview.slice(0, 160) + '…' : item.overview) : 'لا يوجد وصف.' %></p>
+              </div>
+            </a>
+          </article>
+        <% }); %>
+      </div>
+    <% } else if (query && !searchError) { %>
+      <p class="empty">لا توجد نتائج مطابقة. جرّب تعديل الاسم أو النوع أو السنة.</p>
+    <% } else { %>
+      <p class="empty">اكتب اسم العمل واضغط بحث لعرض النتائج.</p>
+    <% } %>
+  </section>
+</section>
