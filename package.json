@@ -9,8 +9,8 @@
   },
   "scripts": {
     "dev": "npx netlify dev",
-    "start": "npx netlify dev",
-    "build": "echo \"Static site - no build step\"",
+    "start": "echo \"Production deploy does not use npm start. Use npm run dev locally.\"",
+    "build": "echo \"No build step required (static public + Netlify Functions).\"",
     "serve:static": "npx serve public"
   },
   "dependencies": {
