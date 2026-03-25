@@ -42,7 +42,7 @@ function parseLocation() {
       page: "subtitles",
       mediaType: subtitlesMatch[1],
       tmdbId: subtitlesMatch[2],
-      language: params.get("language") || "ar",
+      language: params.get("language") || "all",
       provider: params.get("provider") || "all",
       season: params.get("season") || "",
       episode: params.get("episode") || "",
@@ -57,7 +57,7 @@ function parseLocation() {
       tmdbId: mediaMatch[2],
       year: params.get("year") || "",
       provider: params.get("provider") || "all",
-      lang: params.get("lang") || "ar",
+      lang: params.get("lang") || "all",
       season: params.get("season") || "",
       episode: params.get("episode") || ""
     };
@@ -119,7 +119,7 @@ async function fetchSubtitles({ tmdbId, mediaType, language, provider, season, e
   const params = new URLSearchParams();
   params.set("tmdbId", tmdbId);
   params.set("mediaType", mediaType);
-  params.set("language", language || "ar");
+  if (language && language !== "all") params.set("language", language);
   params.set("provider", provider || "all");
   if (season) params.set("season", season);
   if (episode) params.set("episode", episode);
@@ -264,7 +264,7 @@ function renderSearchShell({ query = "", type = "multi", year = "" }) {
   `;
 }
 
-function renderMediaCards(results = []) {
+function renderMediaCards(results = [], visibleCount = 24) {
   const list = document.getElementById("searchResults");
   const countEl = document.getElementById("searchCount");
   if (!results.length) {
@@ -273,7 +273,8 @@ function renderMediaCards(results = []) {
     return;
   }
   countEl.textContent = `عدد النتائج: ${results.length}`;
-  list.innerHTML = results
+  const visible = results.slice(0, visibleCount);
+  list.innerHTML = visible
     .map(
       (item) => `
       <article class="media-card">
@@ -300,6 +301,12 @@ function renderMediaCards(results = []) {
     `
     )
     .join("");
+  if (results.length > visible.length) {
+    list.insertAdjacentHTML(
+      "beforeend",
+      `<div class="row-actions"><button type="button" class="secondary" id="loadMoreSearchBtn">عرض المزيد (${results.length - visible.length})</button></div>`
+    );
+  }
 }
 
 async function renderSearch(route) {
@@ -337,7 +344,19 @@ async function renderSearch(route) {
   try {
     const data = await fetchSearchMedia(query, type, year);
     status.innerHTML = "";
-    renderMediaCards(data.results || []);
+    const allResults = data.results || [];
+    let visibleCount = 24;
+    const paint = () => {
+      renderMediaCards(allResults, visibleCount);
+      const loadMoreBtn = document.getElementById("loadMoreSearchBtn");
+      if (loadMoreBtn) {
+        loadMoreBtn.addEventListener("click", () => {
+          visibleCount += 24;
+          paint();
+        });
+      }
+    };
+    paint();
   } catch (err) {
     status.innerHTML = `<div class="alert alert-error">فشل البحث: ${escapeHtml(err.message)}</div>`;
     document.getElementById("searchResults").innerHTML = "";
@@ -438,7 +457,7 @@ function renderMediaForm(media, route) {
                 <div class="field">
                   <label for="language">لغة الترجمة</label>
                   <select id="language" name="language">
-                    ${["ar", "en", "fr", "de", "es", "tr"]
+                    ${["all", "ar", "en", "fr", "de", "es", "tr"]
                       .map((lng) => `<option value="${lng}" ${route.lang === lng ? "selected" : ""}>${lng}</option>`)
                       .join("")}
                   </select>
@@ -689,7 +708,9 @@ async function renderSubtitles(route) {
       .join("")}`;
     if (route.provider) form.providerFilter.value = route.provider;
 
-    const apply = () => {
+    let visibleSubtitleCount = 40;
+    const apply = (resetVisible = false) => {
+      if (resetVisible) visibleSubtitleCount = 40;
       const filtered = applySubtitleFilters(base, {
         text: form.text.value || "",
         language: form.languageFilter.value,
@@ -699,8 +720,19 @@ async function renderSubtitles(route) {
         source: form.sourceFilter.value,
         sort: form.sort.value
       });
+      const visible = filtered.slice(0, visibleSubtitleCount);
       count.textContent = filtered.length ? `عدد النتائج: ${filtered.length}` : "لا نتائج";
-      renderSubtitleCards(list, filtered);
+      renderSubtitleCards(list, visible);
+      if (filtered.length > visible.length) {
+        list.insertAdjacentHTML(
+          "beforeend",
+          `<div class="row-actions"><button type="button" class="secondary" id="loadMoreSubtitlesBtn">عرض المزيد (${filtered.length - visible.length})</button></div>`
+        );
+        document.getElementById("loadMoreSubtitlesBtn")?.addEventListener("click", () => {
+          visibleSubtitleCount += 40;
+          apply(false);
+        });
+      }
     };
 
     status.innerHTML = "";
@@ -710,17 +742,17 @@ async function renderSubtitles(route) {
       )}</div>`;
     }
 
-    document.getElementById("applySubFilters").addEventListener("click", apply);
+    document.getElementById("applySubFilters").addEventListener("click", () => apply(true));
     document.getElementById("resetSubFilters").addEventListener("click", () => {
       form.reset();
       form.providerFilter.value = route.provider || "all";
-      apply();
+      apply(true);
     });
-    form.addEventListener("change", apply);
+    form.addEventListener("change", () => apply(true));
     form.addEventListener("input", () => {
-      if ((form.text.value || "").length === 0 || (form.text.value || "").length > 2) apply();
+      if ((form.text.value || "").length === 0 || (form.text.value || "").length > 2) apply(true);
     });
-    apply();
+    apply(true);
   } catch (err) {
     count.textContent = "";
     status.innerHTML = `<div class="alert alert-error">فشل تحميل الترجمات: ${escapeHtml(err.message)}</div>`;

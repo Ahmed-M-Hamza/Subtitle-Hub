@@ -66,6 +66,7 @@ export async function readJsonResponse(response) {
 
 export function normalizeLanguageCode(code = "") {
   const lower = String(code).toLowerCase().trim();
+  if (!lower || lower === "all" || lower === "any") return "";
   const aliases = {
     arabic: "ar",
     english: "en",
@@ -134,20 +135,27 @@ export async function tmdbFetch(path, searchParams = {}) {
 
 export async function searchMedia(query, type, year) {
   const endpoint = type === "movie" ? "/search/movie" : type === "tv" ? "/search/tv" : "/search/multi";
-  const payload = await tmdbFetch(endpoint, {
-    query,
-    language: "en-US",
-    include_adult: "false",
-    year: type === "movie" ? year : undefined,
-    first_air_date_year: type === "tv" ? year : undefined,
-    page: 1
-  });
-  return (payload.results || [])
+  const pagesToFetch = 3;
+  const merged = [];
+  for (let page = 1; page <= pagesToFetch; page += 1) {
+    const payload = await tmdbFetch(endpoint, {
+      query,
+      language: "en-US",
+      include_adult: "false",
+      year: type === "movie" ? year : undefined,
+      first_air_date_year: type === "tv" ? year : undefined,
+      page
+    });
+    const list = Array.isArray(payload.results) ? payload.results : [];
+    merged.push(...list);
+    if (!list.length) break;
+  }
+  return merged
     .filter((item) => {
       const mediaType = type === "multi" ? item.media_type : type;
       return mediaType === "movie" || mediaType === "tv";
     })
-    .slice(0, 20)
+    .slice(0, 60)
     .map((item) => {
       const mediaType = type === "multi" ? item.media_type : type;
       const title = mediaType === "movie" ? item.title || item.name || "—" : item.name || item.title || "—";
@@ -327,7 +335,15 @@ function mapOpenSub(item, link, fallbackLang) {
   };
 }
 
-async function searchOpenSubtitles({ tmdbId, mediaType, language, season, episode, year }) {
+async function searchOpenSubtitles({
+  tmdbId,
+  mediaType,
+  language,
+  season,
+  episode,
+  year,
+  page = 1
+}) {
   if (!OPENSUBTITLES_API_KEY) throw new Error("OPENSUBTITLES_API_KEY is not configured");
   let token = "";
   try {
@@ -342,6 +358,7 @@ async function searchOpenSubtitles({ tmdbId, mediaType, language, season, episod
   if (year) url.searchParams.set("year", String(year));
   if (mediaType === "tv" && season) url.searchParams.set("season_number", String(season));
   if (mediaType === "tv" && episode) url.searchParams.set("episode_number", String(episode));
+  url.searchParams.set("page", String(page));
   url.searchParams.set("order_by", "download_count");
   url.searchParams.set("order_direction", "desc");
 
@@ -355,7 +372,7 @@ async function searchOpenSubtitles({ tmdbId, mediaType, language, season, episod
         `OpenSubtitles HTTP ${response.status}`
     );
   }
-  const list = Array.isArray(payload?.data) ? payload.data.slice(0, 30) : [];
+  const list = Array.isArray(payload?.data) ? payload.data : [];
   const out = [];
   for (const item of list) {
     try {
@@ -363,7 +380,15 @@ async function searchOpenSubtitles({ tmdbId, mediaType, language, season, episod
       const mapped = mapOpenSub(item, link, language);
       if (mapped.downloadUrl) out.push(mapped);
     } catch (err) {
-      logError("OpenSubtitles item download resolve failed", err, { itemId: item?.id });
+      const fallback = `https://www.opensubtitles.com/en/subtitles/${encodeURIComponent(
+        String(item?.id || "")
+      )}`;
+      const mapped = mapOpenSub(item, fallback, language);
+      out.push(mapped);
+      logError("OpenSubtitles item download resolve failed", err, {
+        itemId: item?.id,
+        usedFallbackUrl: true
+      });
     }
   }
   return out;
@@ -410,6 +435,15 @@ export async function aggregateSubtitles({
 }) {
   const providerFilter = normalizeProviderFilter(provider);
   const requested = providerFilter === "all" ? ["subdl", "opensubtitles"] : [providerFilter];
+  const debugCounts = {
+    requestedProviders: requested,
+    subdlRaw: 0,
+    subdlMapped: 0,
+    opensubtitlesRaw: 0,
+    opensubtitlesMapped: 0,
+    beforeDedup: 0,
+    afterDedup: 0
+  };
   const providerErrors = [];
   let successCount = 0;
   const subtitles = [];
@@ -431,7 +465,11 @@ export async function aggregateSubtitles({
           releases: 1,
           hi: 1
         });
-        subtitles.push(...mapSubdl(payload, language));
+        const raw = payload?.subtitles || payload?.data || [];
+        const mapped = mapSubdl(payload, language);
+        debugCounts.subdlRaw = Array.isArray(raw) ? raw.length : 0;
+        debugCounts.subdlMapped = mapped.length;
+        subtitles.push(...mapped);
         successCount += 1;
       } catch (err) {
         providerErrors.push({ provider: "subdl", message: err.message });
@@ -447,15 +485,23 @@ export async function aggregateSubtitles({
       });
     } else {
       try {
-        const results = await searchOpenSubtitles({
-          tmdbId,
-          mediaType,
-          language,
-          season,
-          episode,
-          year
-        });
-        subtitles.push(...results);
+        const allResults = [];
+        for (let i = 1; i <= 3; i += 1) {
+          const results = await searchOpenSubtitles({
+            tmdbId,
+            mediaType,
+            language,
+            season,
+            episode,
+            year,
+            page: i
+          });
+          allResults.push(...results);
+          if (results.length < 30) break;
+        }
+        debugCounts.opensubtitlesRaw = allResults.length;
+        debugCounts.opensubtitlesMapped = allResults.length;
+        subtitles.push(...allResults);
         successCount += 1;
       } catch (err) {
         providerErrors.push({ provider: "opensubtitles", message: err.message });
@@ -463,10 +509,15 @@ export async function aggregateSubtitles({
     }
   }
 
+  debugCounts.beforeDedup = subtitles.length;
+  const deduped = sortSubtitles(dedupeSubtitles(subtitles));
+  debugCounts.afterDedup = deduped.length;
+
   return {
     provider: providerFilter,
     providerErrors,
-    subtitles: sortSubtitles(dedupeSubtitles(subtitles)),
+    subtitles: deduped,
+    debugCounts,
     allFailed: requested.length > 0 && successCount === 0
   };
 }

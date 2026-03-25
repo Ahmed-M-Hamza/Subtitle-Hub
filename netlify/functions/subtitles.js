@@ -27,6 +27,7 @@ export async function handler(event) {
     const episode = String(params.get("episode") || "").trim();
     const year = String(params.get("year") || "").trim();
     const provider = normalizeProviderFilter(params.get("provider"));
+    const debug = String(params.get("debug") || "").trim() === "1";
 
     logInfo("subtitles called", {
       hasTmdbId: Boolean(tmdbId),
@@ -59,20 +60,23 @@ export async function handler(event) {
       return json(502, {
         ok: false,
         error: "All subtitle providers failed",
-        providerErrors: agg.providerErrors
+        providerErrors: agg.providerErrors,
+        ...(debug ? { debugCounts: agg.debugCounts } : {})
       });
     }
 
     logInfo("subtitles success", {
       provider,
       count: agg.subtitles.length,
-      providerErrors: agg.providerErrors.length
+      providerErrors: agg.providerErrors.length,
+      ...agg.debugCounts
     });
     return json(200, {
       ok: true,
       provider: agg.provider,
       providerErrors: agg.providerErrors,
-      subtitles: agg.subtitles
+      subtitles: agg.subtitles,
+      ...(debug ? { debugCounts: agg.debugCounts } : {})
     });
   } catch (error) {
     return json(500, {
