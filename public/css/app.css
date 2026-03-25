@@ -69,6 +69,23 @@ a {
   backdrop-filter: blur(12px);
 }
 
+.global-search {
+  flex: 1;
+  min-width: 260px;
+  max-width: 520px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.global-search input {
+  min-width: 0;
+}
+
+.global-search button {
+  min-width: 88px;
+}
+
 .brand {
   display: inline-flex;
   align-items: center;
@@ -325,6 +342,12 @@ button.secondary,
   margin-top: 8px;
 }
 
+.btn-sm {
+  min-width: 0;
+  padding: 8px 12px;
+  font-size: 13px;
+}
+
 .section-header {
   display: flex;
   justify-content: space-between;
@@ -417,6 +440,10 @@ button.secondary,
   line-height: 1.68;
 }
 
+.card-cta {
+  margin-top: 4px;
+}
+
 .pill {
   display: inline-flex;
   align-items: center;
@@ -466,6 +493,18 @@ button.secondary,
   gap: 12px;
 }
 
+.sub-layout {
+  display: grid;
+  grid-template-columns: minmax(260px, 320px) minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.sub-filters-panel {
+  position: sticky;
+  top: 92px;
+}
+
 .sub-item {
   display: grid;
   gap: 10px;
@@ -473,6 +512,30 @@ button.secondary,
   border: 1px solid var(--line-soft);
   border-radius: 16px;
   background: rgba(255, 255, 255, 0.03);
+}
+
+.sub-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  border-radius: 999px;
+  border: 1px solid var(--line-soft);
+  padding: 4px 9px;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.tag-chip.strong {
+  color: #f0f5ff;
+  border-color: rgba(110, 168, 254, 0.5);
+  background: rgba(110, 168, 254, 0.16);
 }
 
 .sub-head {
@@ -501,6 +564,13 @@ button.secondary,
   border: 1px dashed rgba(188, 208, 255, 0.2);
   border-radius: 16px;
   background: rgba(255, 255, 255, 0.02);
+}
+
+.recent-searches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
 }
 
 .breadcrumb {
@@ -555,6 +625,14 @@ button.secondary,
   .filter-panel {
     position: static;
   }
+
+  .sub-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .sub-filters-panel {
+    position: static;
+  }
 }
 
 @media (max-width: 720px) {
@@ -566,6 +644,13 @@ button.secondary,
   .site-header {
     top: 8px;
     margin-bottom: 18px;
+    padding: 10px;
+  }
+
+  .global-search {
+    order: 3;
+    width: 100%;
+    max-width: none;
   }
 
   .hero-card {
