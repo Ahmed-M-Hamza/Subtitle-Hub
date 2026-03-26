@@ -791,6 +791,30 @@ async function fetchTmdbTvNameForSubdl(tmdbId) {
   }
 }
 
+async function fetchTmdbMovieIdentityForFallback(tmdbId) {
+  try {
+    const payload = await tmdbFetch(`/movie/${Number(tmdbId)}`, {
+      language: "en-US",
+      append_to_response: "external_ids"
+    });
+    const title = String(payload?.title || payload?.original_title || "").trim().slice(0, 220);
+    const imdbId = String(payload?.external_ids?.imdb_id || "").trim();
+    const releaseYear = String(payload?.release_date || "").slice(0, 4);
+    return {
+      title,
+      imdbId,
+      year: releaseYear
+    };
+  } catch (err) {
+    logError("TMDb movie identity fallback fetch failed", err, { tmdbId });
+    return {
+      title: "",
+      imdbId: "",
+      year: ""
+    };
+  }
+}
+
 function slugifyForUrl(input = "") {
   return String(input || "")
     .toLowerCase()
@@ -884,6 +908,25 @@ function buildSubdlSeasonPageCandidates({ sdId, showTitle, season }) {
     }
   }
   return Array.from(new Set(candidates)).slice(0, 24);
+}
+
+function buildSubdlMoviePageCandidates({ sdId, movieTitle, year = "" }) {
+  const candidates = [];
+  const titleSlug = slugifyForUrl(movieTitle);
+  const yearStr = String(year || "").trim();
+  if (!titleSlug) return candidates;
+  const slugVariants = Array.from(
+    new Set([titleSlug, titleSlug.replace(/^the-/, ""), yearStr ? `${titleSlug}-${yearStr}` : ""])
+  ).filter(Boolean);
+  for (const s of slugVariants) {
+    if (sdId) {
+      candidates.push(`https://subdl.com/subtitle/sd${sdId}/${s}`);
+      candidates.push(`https://subdl.com/en/subtitle/sd${sdId}/${s}`);
+    }
+    candidates.push(`https://subdl.com/subtitle/${s}`);
+    candidates.push(`https://subdl.com/en/subtitle/${s}`);
+  }
+  return Array.from(new Set(candidates)).slice(0, 18);
 }
 
 function parseSubdlSeasonPageHtmlRows(html, fallbackLanguage = "") {
@@ -1121,6 +1164,8 @@ function mapOpenSub(item, link, fallbackLang) {
 
 async function searchOpenSubtitles({
   tmdbId,
+  imdbId,
+  query,
   mediaType,
   language,
   season,
@@ -1139,7 +1184,13 @@ async function searchOpenSubtitles({
     logError("OpenSubtitles token login failed; fallback to API-key request", err);
   }
   const url = new URL(`${OPENSUBTITLES_API}/subtitles`);
-  url.searchParams.set("tmdb_id", String(tmdbId));
+  const tmdbKey = String(tmdbId || "").trim();
+  const imdbKey = String(imdbId || "").trim();
+  const queryKey = String(query || "").trim();
+  if (tmdbKey) url.searchParams.set("tmdb_id", tmdbKey);
+  else if (imdbKey) url.searchParams.set("imdb_id", imdbKey);
+  else if (queryKey) url.searchParams.set("query", queryKey);
+  else throw new Error("OpenSubtitles search requires tmdb_id, imdb_id, or query");
   url.searchParams.set("type", mediaType);
   if (language) url.searchParams.set("languages", language);
   if (year) url.searchParams.set("year", String(year));
@@ -1673,6 +1724,7 @@ function summarizeSubtitlePipeline(sortCtx, sorted, finalList, debugCounts) {
       htmlFallbackUsed: Boolean(debugCounts.subdlHtmlFallbackUsed),
       htmlFallbackTriggerReason: debugCounts.subdlHtmlFallbackTriggerReason || null,
       htmlFallbackSkipReason: debugCounts.subdlHtmlFallbackSkipReason || null,
+      htmlMoviePageUrl: debugCounts.subdlHtmlMoviePageUrl || null,
       htmlSeasonPageUrl: debugCounts.subdlHtmlSeasonPageUrl || null,
       htmlCandidateUrlsTried: debugCounts.subdlHtmlCandidateUrlsTried || [],
       htmlFetchStatus: debugCounts.subdlHtmlFetchStatus || [],
@@ -1682,6 +1734,8 @@ function summarizeSubtitlePipeline(sortCtx, sorted, finalList, debugCounts) {
       htmlRowSnippets: debugCounts.subdlHtmlRowSnippets || [],
       htmlRowsFound: Number(debugCounts.subdlHtmlRowsFound || 0),
       htmlByLang: debugCounts.subdlHtmlByLang || {},
+      htmlRowsAfterFilter: Number(debugCounts.subdlHtmlRowsAfterSeasonFilter || 0),
+      htmlByLangAfterFilter: debugCounts.subdlHtmlByLangAfterSeasonFilter || {},
       htmlRowsAfterSeasonFilter: Number(debugCounts.subdlHtmlRowsAfterSeasonFilter || 0),
       htmlByLangAfterSeasonFilter: debugCounts.subdlHtmlByLangAfterSeasonFilter || {},
       byLangAfterMap: debugCounts.subdlByLangAfterMap || {},
@@ -1838,6 +1892,7 @@ export async function aggregateSubtitles({
     subdlHtmlFallbackUsed: false,
     subdlHtmlFallbackTriggerReason: null,
     subdlHtmlFallbackSkipReason: null,
+    subdlHtmlMoviePageUrl: null,
     subdlHtmlSeasonPageUrl: null,
     subdlHtmlCandidateUrlsTried: [],
     subdlHtmlFetchStatus: [],
@@ -1851,6 +1906,7 @@ export async function aggregateSubtitles({
     subdlHtmlByLangAfterSeasonFilter: {},
     subdlWinningProbe: null,
     subdlClassifySamples: [],
+    opensubtitlesMovieAttempts: [],
     perProviderAfterSubdl: {},
     perProviderMergedBeforeDedupe: {},
     perProviderAfterDedupe: {},
@@ -1926,6 +1982,15 @@ export async function aggregateSubtitles({
                 ]
               : false
           ,
+          movieFallbackChain:
+            mediaType === "movie"
+              ? [
+                  "movieTmdbYear",
+                  "movieTmdbNoYear",
+                  "movieFilmNameYear",
+                  "movieFilmNameNoYear"
+                ]
+              : false,
           tvSeasonBroadProbePages:
             mediaType === "tv" && tvQueryMode === "season" ? [1, 2, 3] : false
         };
@@ -2008,11 +2073,12 @@ export async function aggregateSubtitles({
               error: String(err?.message || err),
               paramsEcho: echoSubdlParamsForDiag(params)
             });
-            logError("SubDL season probe failed", err, {
+            logError("SubDL probe failed", err, {
               probe,
               tmdbId,
               title: extraMeta.title || null,
               season,
+              mediaType,
               htmlSeasonPageUrl: extraMeta.htmlSeasonPageUrl || null
             });
             return false;
@@ -2322,7 +2388,164 @@ export async function aggregateSubtitles({
           }
           debugCounts.subdlTvAttempts = attempts;
         } else {
-          await runSubdlAttempt("movie", subdlParamsMovie());
+          const requestedYear = String(year || "").trim();
+          const movieIdentity = await fetchTmdbMovieIdentityForFallback(tmdbId);
+          const filmName = sanitizeSubdlFilmNameForQuery(movieIdentity.title || "");
+          const fallbackYear = requestedYear || String(movieIdentity.year || "").trim();
+          const movieProbes = [
+            {
+              probe: "movieTmdbYear",
+              params: {
+                tmdb_id: tmdbId,
+                type: "movie",
+                ...subdlCommon,
+                year: fallbackYear || undefined
+              }
+            },
+            {
+              probe: "movieTmdbNoYear",
+              params: {
+                tmdb_id: tmdbId,
+                type: "movie",
+                ...subdlCommon
+              }
+            },
+            {
+              probe: "movieFilmNameYear",
+              params: filmName
+                ? {
+                    type: "movie",
+                    film_name: filmName,
+                    ...subdlCommon,
+                    year: fallbackYear || undefined
+                  }
+                : null
+            },
+            {
+              probe: "movieFilmNameNoYear",
+              params: filmName
+                ? {
+                    type: "movie",
+                    film_name: filmName,
+                    ...subdlCommon
+                  }
+                : null
+            }
+          ];
+          debugCounts.subdlRequestEcho.year_sent_for_subdl = fallbackYear || null;
+          debugCounts.subdlRequestEcho.year_optional_fallback_enabled = true;
+          for (const step of movieProbes) {
+            if (!step?.params) continue;
+            const ok = await runSubdlAttemptSafe(step.probe, step.params, {}, { title: filmName });
+            if (ok) break;
+          }
+          const subdlMovieCountAfterApi = subtitles.filter((row) => String(row.provider || "") === "subdl").length;
+          if (subdlMovieCountAfterApi === 0) {
+            debugCounts.subdlHtmlFallbackTriggerReason = "movie-api-empty";
+            const movieTitleRaw = String(movieIdentity.title || "").trim();
+            const movieCandidates = buildSubdlMoviePageCandidates({
+              sdId: subdlHtmlSeedSdId,
+              movieTitle: movieTitleRaw || filmName,
+              year: fallbackYear
+            });
+            debugCounts.subdlHtmlCandidateUrlsTried = movieCandidates;
+            if (!movieCandidates.length) {
+              debugCounts.subdlHtmlFallbackSkipReason = "skipped-no-movie-html-candidates";
+            } else {
+              let htmlRows = [];
+              let usedUrl = null;
+              let anyHtml = false;
+              const fetchStatus = [];
+              for (const candidateUrl of movieCandidates) {
+                try {
+                  const res = await fetch(candidateUrl, {
+                    headers: { Accept: "text/html" }
+                  });
+                  if (!res.ok) {
+                    fetchStatus.push({
+                      url: candidateUrl,
+                      ok: false,
+                      status: Number(res.status || 0),
+                      hasHtml: false,
+                      parsedRows: 0
+                    });
+                    continue;
+                  }
+                  const html = await res.text();
+                  const hasHtml = Boolean(html && html.length > 200);
+                  anyHtml = anyHtml || hasHtml;
+                  if (hasHtml && !debugCounts.subdlHtmlMoviePageUrl) {
+                    debugCounts.subdlHtmlMoviePageUrl = candidateUrl;
+                  }
+                  const parsedOut = parseSubdlSeasonPageHtmlRows(html, normalizeLanguageCode(language) || "en");
+                  const parsed = (parsedOut.rows || []).map((row) => ({
+                    ...row,
+                    subdlProbe: "movieModeHtmlPage"
+                  }));
+                  if (parsedOut.diag) {
+                    debugCounts.subdlHtmlParserStageCounts = {
+                      languageHeadersFound: Number(parsedOut.diag.languageHeadersFound || 0),
+                      rowCardsFound: Number(parsedOut.diag.rowCardsFound || 0),
+                      downloadLinksFound: Number(parsedOut.diag.downloadLinksFound || 0),
+                      uploaderLinksFound: Number(parsedOut.diag.uploaderLinksFound || 0)
+                    };
+                    debugCounts.subdlHtmlHeaderSnippets = Array.isArray(parsedOut.diag.headerSnippets)
+                      ? parsedOut.diag.headerSnippets.slice(0, 3)
+                      : [];
+                    debugCounts.subdlHtmlRowSnippets = Array.isArray(parsedOut.diag.rowSnippets)
+                      ? parsedOut.diag.rowSnippets.slice(0, 3)
+                      : [];
+                  }
+                  fetchStatus.push({
+                    url: candidateUrl,
+                    ok: true,
+                    status: Number(res.status || 200),
+                    hasHtml,
+                    parsedRows: parsed.length
+                  });
+                  if (!parsed.length) continue;
+                  htmlRows = parsed;
+                  usedUrl = candidateUrl;
+                  break;
+                } catch (err) {
+                  fetchStatus.push({
+                    url: candidateUrl,
+                    ok: false,
+                    status: 0,
+                    hasHtml: false,
+                    parsedRows: 0
+                  });
+                  logError("SubDL movie HTML fallback fetch/parse failed", err, {
+                    tmdbId,
+                    mediaType,
+                    title: movieTitleRaw || filmName || null,
+                    htmlMoviePageUrl: candidateUrl
+                  });
+                }
+              }
+              debugCounts.subdlHtmlFetchStatus = fetchStatus;
+              debugCounts.subdlHtmlAnyCandidateReturnedHtml = anyHtml;
+              if (!htmlRows.length) {
+                debugCounts.subdlHtmlFallbackSkipReason = anyHtml
+                  ? "skipped-movie-html-parse-empty"
+                  : "skipped-movie-html-fetch-failed";
+              } else {
+                debugCounts.subdlHtmlFallbackUsed = true;
+                debugCounts.subdlHtmlFallbackSkipReason = null;
+                debugCounts.subdlHtmlMoviePageUrl = usedUrl;
+                debugCounts.subdlHtmlRowsFound = htmlRows.length;
+                debugCounts.subdlHtmlByLang = countByNormalizedSubtitleLang(htmlRows);
+                debugCounts.subdlHtmlRowsAfterSeasonFilter = htmlRows.length;
+                debugCounts.subdlHtmlByLangAfterSeasonFilter = countByNormalizedSubtitleLang(htmlRows);
+                subtitles.push(...htmlRows);
+                mappedTotal += htmlRows.length;
+                rawTotal += htmlRows.length;
+                if (!debugCounts.subdlWinningProbe) debugCounts.subdlWinningProbe = "movieModeHtmlPage";
+              }
+            }
+          } else {
+            debugCounts.subdlHtmlFallbackSkipReason = "skipped-api-sufficient";
+          }
           debugCounts.subdlTvAttempts = attempts;
         }
 
@@ -2351,6 +2574,7 @@ export async function aggregateSubtitles({
       try {
         const allResults = [];
         let rawSum = 0;
+        const openSubMovieAttempts = [];
         const pullOpenSubPages = async (episodeFilter) => {
           const seasonMode = mediaType === "tv" && tvQueryMode === "season";
           const resolveDownloads = !seasonMode;
@@ -2374,6 +2598,75 @@ export async function aggregateSubtitles({
             if ((pageResult.items || []).length < 30) break;
           }
         };
+        const runOpenSubAttempt = async (
+          label,
+          {
+            tmdbIdOverride = "",
+            imdbIdOverride = "",
+            queryOverride = "",
+            yearOverride = year || "",
+            episodeOverride = episode
+          } = {}
+        ) => {
+          const beforeRaw = rawSum;
+          const beforeMapped = allResults.length;
+          const runPages = async () => {
+            const seasonMode = mediaType === "tv" && tvQueryMode === "season";
+            const resolveDownloads = !seasonMode;
+            const maxResolve = seasonMode ? 0 : 12;
+            const resolveTimeoutMs = seasonMode ? 0 : 3500;
+            for (let i = 1; i <= 3; i += 1) {
+              const pageResult = await searchOpenSubtitles({
+                tmdbId: tmdbIdOverride || "",
+                imdbId: imdbIdOverride || "",
+                query: queryOverride || "",
+                mediaType,
+                language,
+                season,
+                episode: episodeOverride,
+                year: yearOverride,
+                page: i,
+                resolveDownloads,
+                maxResolve,
+                resolveTimeoutMs
+              });
+              rawSum += Number(pageResult.rawCount || 0);
+              allResults.push(...(pageResult.items || []));
+              if ((pageResult.items || []).length < 30) break;
+            }
+          };
+          try {
+            await runPages();
+            openSubMovieAttempts.push({
+              probe: label,
+              tmdb_id: tmdbIdOverride ? String(tmdbIdOverride) : null,
+              imdb_id: imdbIdOverride ? String(imdbIdOverride) : null,
+              query: queryOverride ? String(queryOverride).slice(0, 120) : null,
+              year: yearOverride ? String(yearOverride) : null,
+              rawAdded: Math.max(0, rawSum - beforeRaw),
+              mappedAdded: Math.max(0, allResults.length - beforeMapped),
+              failed: false
+            });
+          } catch (err) {
+            openSubMovieAttempts.push({
+              probe: label,
+              tmdb_id: tmdbIdOverride ? String(tmdbIdOverride) : null,
+              imdb_id: imdbIdOverride ? String(imdbIdOverride) : null,
+              query: queryOverride ? String(queryOverride).slice(0, 120) : null,
+              year: yearOverride ? String(yearOverride) : null,
+              rawAdded: 0,
+              mappedAdded: 0,
+              failed: true,
+              error: String(err?.message || err)
+            });
+            logError("OpenSubtitles movie fallback probe failed", err, {
+              probe: label,
+              tmdbId,
+              mediaType
+            });
+          }
+          return Math.max(0, rawSum - beforeRaw);
+        };
         if (mediaType === "tv") {
           if (tvQueryMode === "season") {
             await pullOpenSubPages("");
@@ -2381,8 +2674,42 @@ export async function aggregateSubtitles({
             await pullOpenSubPages(episode);
           }
         } else {
-          await pullOpenSubPages(episode);
+          const strictRaw = await runOpenSubAttempt("movieTmdbStrict", {
+            tmdbIdOverride: tmdbId,
+            yearOverride: year || ""
+          });
+          if (strictRaw === 0) {
+            const movieIdentity = await fetchTmdbMovieIdentityForFallback(tmdbId);
+            const titleQuery = String(movieIdentity.title || "").trim();
+            const fallbackYear = String(year || "").trim() || String(movieIdentity.year || "").trim();
+            const imdbId = String(movieIdentity.imdbId || "").trim();
+            if (imdbId) {
+              const imdbRaw = await runOpenSubAttempt("movieImdbWithYear", {
+                imdbIdOverride: imdbId,
+                yearOverride: fallbackYear || ""
+              });
+              if (imdbRaw === 0) {
+                await runOpenSubAttempt("movieImdbNoYear", {
+                  imdbIdOverride: imdbId,
+                  yearOverride: ""
+                });
+              }
+            }
+            if (rawSum === 0 && titleQuery) {
+              const titleYearRaw = await runOpenSubAttempt("movieTitleYear", {
+                queryOverride: titleQuery,
+                yearOverride: fallbackYear || ""
+              });
+              if (titleYearRaw === 0) {
+                await runOpenSubAttempt("movieTitleNoYear", {
+                  queryOverride: titleQuery,
+                  yearOverride: ""
+                });
+              }
+            }
+          }
         }
+        debugCounts.opensubtitlesMovieAttempts = openSubMovieAttempts;
         debugCounts.opensubtitlesRaw = rawSum;
         debugCounts.opensubtitlesMapped = allResults.length;
         subtitles.push(...allResults);
