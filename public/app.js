@@ -92,6 +92,8 @@ const UI_TEXT = {
     searchHeroTitle: "ابحث عن فيلم أو مسلسل",
     searchHeroSubtitle: "نتائج مرتبة مع بطاقة واضحة لكل عمل وزر مباشر لعرض الترجمات.",
     searchFiltersTitle: "فلاتر البحث",
+    showFilters: "إظهار الفلاتر",
+    hideFilters: "إخفاء الفلاتر",
     searchLabelQuery: "اسم الفيلم أو المسلسل",
     searchLabelType: "النوع",
     searchTypeAll: "الكل",
@@ -248,6 +250,8 @@ const UI_TEXT = {
     searchHeroTitle: "Search movies and TV shows",
     searchHeroSubtitle: "Ranked results with clear cards and direct subtitle actions.",
     searchFiltersTitle: "Search filters",
+    showFilters: "Show filters",
+    hideFilters: "Hide filters",
     searchLabelQuery: "Movie or TV title",
     searchLabelType: "Type",
     searchTypeAll: "All",
@@ -1761,7 +1765,10 @@ function renderSearchShell({ query = "", type = "multi", year = "" }) {
       <p class="hero-subtitle">${escapeHtml(t("searchHeroSubtitle"))}</p>
     </section>
     <section class="search-layout">
-      <aside class="card filter-panel">
+      <button type="button" id="searchFilterToggle" class="btn secondary search-filter-toggle" aria-expanded="false" aria-controls="searchFilterPanel">${escapeHtml(
+        t("showFilters")
+      )}</button>
+      <aside class="card filter-panel" id="searchFilterPanel">
         <div class="card-inner">
           <div class="card-title-row">
             <h2 class="title-h2">${escapeHtml(t("searchFiltersTitle"))}</h2>
@@ -1947,6 +1954,22 @@ async function renderSearch(route) {
   const form = document.getElementById("searchForm");
   const status = document.getElementById("searchStatus");
   const summary = document.getElementById("searchSummary");
+  const filterPanel = document.getElementById("searchFilterPanel");
+  const filterToggle = document.getElementById("searchFilterToggle");
+  const applyFilterPanelState = (expanded) => {
+    if (!filterPanel || !filterToggle) return;
+    filterPanel.classList.toggle("is-collapsed", !expanded);
+    filterToggle.setAttribute("aria-expanded", expanded ? "true" : "false");
+    filterToggle.textContent = expanded ? t("hideFilters") : t("showFilters");
+  };
+  if (filterPanel && filterToggle) {
+    const shouldCollapseInitially = window.innerWidth <= 980;
+    applyFilterPanelState(!shouldCollapseInitially);
+    filterToggle.addEventListener("click", () => {
+      const expanded = filterToggle.getAttribute("aria-expanded") === "true";
+      applyFilterPanelState(!expanded);
+    });
+  }
   state.searchAutocompleteCleanup = setupSearchAutocomplete({
     containerEl: form,
     inputEl: form.query,
