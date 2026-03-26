@@ -8,7 +8,16 @@
       name="description"
       content="Subtitle Hub - بحث عن الأفلام والمسلسلات وجلب الترجمات عبر TMDb وSubDL وOpenSubtitles."
     />
-    <title>Subtitle Hub</title>
+    <meta property="og:title" content="Subtitle Hub | منصة بحث ترجمات احترافية" />
+    <meta
+      property="og:description"
+      content="ابحث عن الأفلام والمسلسلات، واكتشف أفضل الترجمات المصنفة بالثقة والجودة عبر مصادر متعددة."
+    />
+    <meta property="og:type" content="website" />
+    <meta property="og:locale" content="ar_AR" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <title>Subtitle Hub | بحث ترجمات أفلام ومسلسلات</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -30,6 +39,13 @@
           />
           <button type="submit">بحث</button>
         </form>
+        <div class="header-controls">
+          <div class="header-control-group" id="langSwitcher" role="group" aria-label="Language switcher">
+            <button type="button" class="header-toggle" data-lang="ar">العربية</button>
+            <button type="button" class="header-toggle" data-lang="en">English</button>
+          </div>
+          <button type="button" id="themeToggleBtn" class="header-toggle">Dark</button>
+        </div>
         <nav class="nav-links" aria-label="التنقل الرئيسي">
           <a href="/" data-nav="home" class="is-active">الرئيسية</a>
           <a href="/search" data-nav="search">البحث</a>

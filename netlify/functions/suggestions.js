@@ -5,7 +5,7 @@ import {
   normalizeQuery,
   parseSearchType,
   requireSearchConfig,
-  searchMedia
+  searchSuggestions
 } from "./_shared.js";
 
 export async function handler(event) {
@@ -20,7 +20,7 @@ export async function handler(event) {
     }
 
     const params = new URLSearchParams(event.queryStringParameters || {});
-    const queryCheck = normalizeQuery(params.get("query"), { min: 2, max: 120 });
+    const queryCheck = normalizeQuery(params.get("query"), { min: 2, max: 100 });
     if (!queryCheck.ok) return json(400, { ok: false, error: queryCheck.error });
     const query = queryCheck.value;
     const type = parseSearchType(params.get("type"));
@@ -31,16 +31,22 @@ export async function handler(event) {
     });
     if (!yearCheck.ok) return json(400, { ok: false, error: yearCheck.error });
     const year = yearCheck.value;
+    const limitCheck = normalizePositiveInt(params.get("limit") || 8, {
+      min: 1,
+      max: 12,
+      name: "limit"
+    });
+    if (!limitCheck.ok) return json(400, { ok: false, error: limitCheck.error });
+    const limit = Number(limitCheck.value || 8);
 
-    logInfo("search-media called", {
-      hasQuery: Boolean(query),
+    const items = await searchSuggestions(query, type, year, limit);
+    logInfo("suggestions success", {
+      hasQuery: true,
       type,
+      count: items.length,
       hasYear: Boolean(year)
     });
-
-    const results = await searchMedia(query, type, year);
-    logInfo("search-media success", { count: results.length, type });
-    return json(200, { ok: true, results });
+    return json(200, { ok: true, items });
   } catch (error) {
     return json(500, {
       ok: false,

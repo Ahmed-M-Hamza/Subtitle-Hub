@@ -2,6 +2,7 @@ import {
   getMediaDetailsById,
   json,
   logInfo,
+  normalizePositiveInt,
   parseMediaType,
   requireSearchConfig
 } from "./_shared.js";
@@ -18,20 +19,19 @@ export async function handler(event) {
     }
 
     const params = new URLSearchParams(event.queryStringParameters || {});
-    const tmdbId = String(params.get("tmdbId") || "").trim();
+    const tmdbIdCheck = normalizePositiveInt(params.get("tmdbId"), {
+      min: 1,
+      max: 999999999,
+      name: "tmdbId"
+    });
+    if (!tmdbIdCheck.ok) return json(400, { ok: false, error: tmdbIdCheck.error });
+    const tmdbId = tmdbIdCheck.value;
     const mediaType = parseMediaType(params.get("mediaType"));
 
     logInfo("media-details called", {
       hasTmdbId: Boolean(tmdbId),
       mediaType
     });
-
-    if (!tmdbId) {
-      return json(400, { ok: false, error: "tmdbId is required" });
-    }
-    if (!/^\d+$/.test(tmdbId)) {
-      return json(400, { ok: false, error: "tmdbId must be numeric" });
-    }
 
     const media = await getMediaDetailsById(mediaType, tmdbId);
     logInfo("media-details success", {

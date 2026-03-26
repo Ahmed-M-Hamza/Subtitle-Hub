@@ -1,5 +1,6 @@
 /api/health /.netlify/functions/health 200
 /api/search-media /.netlify/functions/search-media 200
+/api/suggestions /.netlify/functions/suggestions 200
 /api/media-details /.netlify/functions/media-details 200
 /api/subtitles /.netlify/functions/subtitles 200
 
