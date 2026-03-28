@@ -17,7 +17,8 @@ export async function handler() {
       latestMoviesWithSubs: feed.sections?.latestMoviesWithSubs?.length || 0,
       latestArabicMovies: feed.sections?.latestArabicMovies?.length || 0,
       latestTvWithSubs: feed.sections?.latestTvWithSubs?.length || 0,
-      trendingWithSubs: feed.sections?.trendingWithSubs?.length || 0
+      trendingWithSubs: feed.sections?.trendingWithSubs?.length || 0,
+      popularWithSubs: feed.sections?.popularWithSubs?.length || 0
     });
     return json(200, {
       ok: true,
@@ -33,7 +34,8 @@ export async function handler() {
         latestMoviesWithSubs: [],
         latestArabicMovies: [],
         latestTvWithSubs: [],
-        trendingWithSubs: []
+        trendingWithSubs: [],
+        popularWithSubs: []
       },
       providerErrors: [
         {
