@@ -143,7 +143,7 @@ export async function handler(event) {
         diagnosticsFlag ? "diag1" : "diag0",
         `rev${SUBTITLES_PIPELINE_CACHE_REV}`
       ]),
-      2 * 60 * 1000,
+      5 * 60 * 1000,
       () =>
         aggregateSubtitles({
           tmdbId,

@@ -1739,7 +1739,7 @@ async function fetchHealth() {
 }
 
 async function fetchHomeFeed() {
-  return apiFetchCached("/.netlify/functions/home-feed", 5 * 60 * 1000);
+  return apiFetchCached("/.netlify/functions/home-feed", 10 * 60 * 1000);
 }
 
 function setMetaTag(selector, attr, value) {
@@ -1867,7 +1867,7 @@ async function fetchSubtitles({ tmdbId, mediaType, language, provider, season, e
   if (typeof window !== "undefined" && isSubtitleDevDiagnosticsEnabled()) {
     params.set("diagnostics", "1");
   }
-  return apiFetchCached(`/.netlify/functions/subtitles?${params.toString()}`, 60 * 1000);
+  return apiFetchCached(`/.netlify/functions/subtitles?${params.toString()}`, 3 * 60 * 1000);
 }
 
 function normalizeProviderHealth(ph) {

@@ -25,8 +25,8 @@ const APP_NAME = String(process.env.APP_NAME || "Subtitle Hub").trim() || "Subti
 const BOOTED_AT = Date.now();
 
 /** Bump when TV classification / subtitle aggregation changes — included in subtitles cache key (see subtitles.js). */
-export const SUBTITLES_PIPELINE_CACHE_REV = 22;
-export const HOME_FEED_CACHE_REV = 2;
+export const SUBTITLES_PIPELINE_CACHE_REV = 23;
+export const HOME_FEED_CACHE_REV = 3;
 const SUBDL_SEASON_HTML_LOW_COUNT_THRESHOLD = 20;
 const HOME_FEED_TIME_BUDGET_MS = 25000;
 /** Min cards required to expose a discovery section (Arabic is slightly looser). */
@@ -38,8 +38,12 @@ const HOME_FEED_DISPLAY_LATEST_TV = 8;
 const HOME_FEED_DISPLAY_TRENDING = 7;
 const HOME_FEED_DISPLAY_POPULAR = 7;
 const HOME_FEED_DISPLAY_ARABIC = 8;
-/** Max TMDb candidates to probe per section (sequential probes — keep bounded). */
+/** Max TMDb candidates to probe per section (bounded; probes run with limited concurrency). */
 const HOME_FEED_MAX_PROBE_LATEST = 16;
+/** Concurrent subtitle availability probes per home-feed section (SubDL + OpenSubtitles per item). */
+const HOME_FEED_PROBE_CONCURRENCY = 4;
+/** Parallel OpenSubtitles /download resolves per search page (was strictly sequential). */
+const OPENSUB_DOWNLOAD_RESOLVE_CONCURRENCY = 6;
 const HOME_FEED_MAX_PROBE_TV = 16;
 const HOME_FEED_MAX_PROBE_TRENDING = 14;
 const HOME_FEED_MAX_PROBE_POPULAR = 14;
@@ -412,11 +416,15 @@ async function probeOpenSubAvailability({ tmdbId, mediaType, language = "", seas
   }
 }
 
-async function subtitleAvailabilityForItem(item, { language = "" } = {}) {
+async function subtitleAvailabilityForItem(item, { language = "", probeCache = null } = {}) {
   const tmdbId = Number(item?.tmdbId || 0);
   const mediaType = String(item?.mediaType || "").toLowerCase();
   if (!tmdbId || (mediaType !== "movie" && mediaType !== "tv")) {
     return { hasSubtitles: false, providers: [] };
+  }
+  const cacheKey = `${mediaType}:${tmdbId}:${normalizeLanguageCode(language) || "all"}`;
+  if (probeCache && probeCache.has(cacheKey)) {
+    return probeCache.get(cacheKey);
   }
   const seasonProbe = mediaType === "tv" ? 1 : "";
   const providers = [];
@@ -430,12 +438,14 @@ async function subtitleAvailabilityForItem(item, { language = "" } = {}) {
   if (opensub.hasSubtitles) providers.push("opensubtitles");
   const probeSuccessCount = Number(Boolean(subdl.ok)) + Number(Boolean(opensub.ok));
   const reason = providers.length ? "matched" : probeSuccessCount === 0 ? "all-provider-probes-failed" : "no-subtitles-found";
-  return {
+  const result = {
     hasSubtitles: providers.length > 0,
     providers,
     reason,
     probeSuccessCount
   };
+  if (probeCache) probeCache.set(cacheKey, result);
+  return result;
 }
 
 function homeFeedIsoDateMs(raw = "") {
@@ -489,7 +499,8 @@ async function filterBySubtitleAvailability(
     rankCollectCap = HOME_FEED_RANK_COLLECT_CAP,
     deadlineAt = 0,
     sectionName = "",
-    minDisplayRows = HOME_FEED_MIN_SECTION
+    minDisplayRows = HOME_FEED_MIN_SECTION,
+    probeCache = null
   } = {}
 ) {
   const candidates = dedupeDiscoveryItems(items).slice(0, maxProbe);
@@ -502,31 +513,48 @@ async function filterBySubtitleAvailability(
   };
   const arabicSection = normalizeLanguageCode(language) === "ar";
 
-  for (const item of candidates) {
-    if (deadlineAt && Date.now() >= deadlineAt) {
-      timeBudgetHit = true;
-      break;
-    }
-    if (collected.length >= rankCollectCap) break;
-    attempted += 1;
-    const availability = await subtitleAvailabilityForItem(item, { language });
-    if (!availability.hasSubtitles) {
-      if (reasonCounts[availability.reason] != null) reasonCounts[availability.reason] += 1;
-      continue;
-    }
-    collected.push({
-      ...item,
-      subtitleProviders: availability.providers,
-      probeSuccessCount: availability.probeSuccessCount,
-      subtitleCoverage: {
-        any: true,
-        arabic: arabicSection
+  let nextCandidate = 0;
+  const claimCandidate = () => {
+    const i = nextCandidate;
+    nextCandidate += 1;
+    return i;
+  };
+
+  const runOne = async () => {
+    while (true) {
+      if (deadlineAt && Date.now() >= deadlineAt) {
+        timeBudgetHit = true;
+        break;
       }
-    });
-  }
+      if (collected.length >= rankCollectCap) break;
+      const idx = claimCandidate();
+      if (idx >= candidates.length) break;
+      attempted += 1;
+      const item = candidates[idx];
+      const availability = await subtitleAvailabilityForItem(item, { language, probeCache });
+      if (!availability.hasSubtitles) {
+        const r = availability.reason;
+        if (r && reasonCounts[r] != null) reasonCounts[r] += 1;
+        continue;
+      }
+      collected.push({
+        ...item,
+        subtitleProviders: availability.providers,
+        probeSuccessCount: availability.probeSuccessCount,
+        subtitleCoverage: {
+          any: true,
+          arabic: arabicSection
+        }
+      });
+    }
+  };
+
+  const workers = Math.min(HOME_FEED_PROBE_CONCURRENCY, Math.max(1, candidates.length));
+  await Promise.all(Array.from({ length: workers }, () => runOne()));
 
   const scoreOpts = { arabicSection };
   collected.sort((a, b) => scoreHomeDiscoveryRow(b, scoreOpts) - scoreHomeDiscoveryRow(a, scoreOpts));
+  if (collected.length > rankCollectCap) collected.splice(rankCollectCap);
 
   let rows = collected.slice(0, displayLimit);
   if (rows.length < minDisplayRows) {
@@ -567,9 +595,10 @@ export async function buildHomeFeed() {
     logInfo("home-feed awaiting in-flight build");
     return homeFeedBuildPromise;
   }
-  homeFeedBuildPromise = getOrSetCache("homefeed", key, 15 * 60 * 1000, async () => {
+  homeFeedBuildPromise = getOrSetCache("homefeed", key, 30 * 60 * 1000, async () => {
     const startedAt = Date.now();
     const deadlineAt = startedAt + HOME_FEED_TIME_BUDGET_MS;
+    const homeFeedProbeCache = new Map();
     logInfo("home-feed cache miss: build started", { budgetMs: HOME_FEED_TIME_BUDGET_MS });
 
     const fetchSourceSafe = async (sourceName, path, params) => {
@@ -651,7 +680,8 @@ export async function buildHomeFeed() {
         rankCollectCap: HOME_FEED_RANK_COLLECT_CAP,
         deadlineAt,
         sectionName: "latestMoviesWithSubs",
-        minDisplayRows: HOME_FEED_MIN_SECTION
+        minDisplayRows: HOME_FEED_MIN_SECTION,
+        probeCache: homeFeedProbeCache
       })
     );
     const latestTvWithSubsResult = await runSectionSafe("latestTvWithSubs", () =>
@@ -662,7 +692,8 @@ export async function buildHomeFeed() {
         rankCollectCap: HOME_FEED_RANK_COLLECT_CAP,
         deadlineAt,
         sectionName: "latestTvWithSubs",
-        minDisplayRows: HOME_FEED_MIN_SECTION
+        minDisplayRows: HOME_FEED_MIN_SECTION,
+        probeCache: homeFeedProbeCache
       })
     );
     const trendingWithSubsResult = await runSectionSafe("trendingWithSubs", () =>
@@ -673,7 +704,8 @@ export async function buildHomeFeed() {
         rankCollectCap: HOME_FEED_RANK_COLLECT_CAP,
         deadlineAt,
         sectionName: "trendingWithSubs",
-        minDisplayRows: HOME_FEED_MIN_SECTION
+        minDisplayRows: HOME_FEED_MIN_SECTION,
+        probeCache: homeFeedProbeCache
       })
     );
     const popularWithSubsResult = await runSectionSafe("popularWithSubs", () =>
@@ -684,7 +716,8 @@ export async function buildHomeFeed() {
         rankCollectCap: HOME_FEED_RANK_COLLECT_CAP,
         deadlineAt,
         sectionName: "popularWithSubs",
-        minDisplayRows: HOME_FEED_MIN_SECTION
+        minDisplayRows: HOME_FEED_MIN_SECTION,
+        probeCache: homeFeedProbeCache
       })
     );
     const latestArabicMoviesResult = await runSectionSafe("latestArabicMovies", () =>
@@ -695,7 +728,8 @@ export async function buildHomeFeed() {
         rankCollectCap: HOME_FEED_RANK_COLLECT_CAP,
         deadlineAt,
         sectionName: "latestArabicMovies",
-        minDisplayRows: HOME_FEED_MIN_SECTION_ARABIC
+        minDisplayRows: HOME_FEED_MIN_SECTION_ARABIC,
+        probeCache: homeFeedProbeCache
       })
     );
     const latestMoviesWithSubs = latestMoviesWithSubsResult.rows.map(sanitizeHomeFeedRow);
@@ -963,11 +997,18 @@ function echoSubdlParamsForDiag(params) {
 
 async function fetchTmdbTvNameForSubdl(tmdbId) {
   try {
-    const payload = await tmdbFetch(`/tv/${Number(tmdbId)}`, { language: "en-US" });
-    const name = String(payload?.name || payload?.original_name || "").trim();
-    return name.slice(0, 200);
+    const payload = await tmdbFetch(`/tv/${Number(tmdbId)}`, {
+      language: "en-US",
+      append_to_response: "external_ids"
+    });
+    const name = String(payload?.name || "").trim();
+    const originalName = String(payload?.original_name || "").trim();
+    const primary = String(name || originalName).trim().slice(0, 200);
+    const original = String(originalName || name).trim().slice(0, 200);
+    const imdbId = String(payload?.external_ids?.imdb_id || "").trim();
+    return { primary, original, imdbId };
   } catch {
-    return "";
+    return { primary: "", original: "", imdbId: "" };
   }
 }
 
@@ -1106,6 +1147,63 @@ function extractSubdlSdIdFromUrl(url = "") {
 }
 
 function parseSubdlCanonicalLinksFromHtml(html = "") {
+  return parseSubdlCanonicalSearchHits(html).map((h) => h.url);
+}
+
+function normalizeSubdlResolverTitle(input = "") {
+  return String(input || "")
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/&/g, " and ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+    .replace(/\s+/g, " ");
+}
+
+function extractSubdlShowSlugFromCanonicalUrl(url = "") {
+  const m = String(url || "").match(/\/subtitle\/sd\d+\/([^/?#]+)/i);
+  return m ? String(m[1] || "").trim().toLowerCase() : "";
+}
+
+function expandSubdlResolverSlugVariants(slug) {
+  const s = String(slug || "").trim().toLowerCase();
+  if (!s) return [];
+  const bare = s.replace(/^the-/, "");
+  return Array.from(new Set([s, bare].filter(Boolean)));
+}
+
+function buildSubdlResolverAcceptedSlugSet(primaryRaw, originalRaw) {
+  const set = new Set();
+  for (const raw of [primaryRaw, originalRaw]) {
+    const t = String(raw || "").trim();
+    if (!t) continue;
+    const slug = slugifyForUrl(t);
+    if (!slug) continue;
+    for (const v of expandSubdlResolverSlugVariants(slug)) {
+      set.add(v);
+    }
+  }
+  return set;
+}
+
+function normalizeImdbIdForSubdlSnippet(id = "") {
+  const s = String(id || "").trim().toLowerCase();
+  if (!s) return "";
+  if (s.startsWith("tt") && /^tt\d+$/.test(s)) return s;
+  if (/^\d{6,}$/.test(s)) return `tt${s}`;
+  return "";
+}
+
+function subdlSearchHtmlSnippetContainsImdb(html, hrefIndex, imdbNorm) {
+  if (!imdbNorm || hrefIndex == null || hrefIndex < 0) return false;
+  const win = 1200;
+  const start = Math.max(0, hrefIndex - win);
+  const slice = html.slice(start, hrefIndex + win).toLowerCase();
+  return slice.includes(imdbNorm);
+}
+
+function parseSubdlCanonicalSearchHits(html = "") {
   const body = String(html || "");
   const out = [];
   const seen = new Set();
@@ -1118,26 +1216,111 @@ function parseSubdlCanonicalLinksFromHtml(html = "") {
     const clean = abs.split("?")[0];
     if (seen.has(clean)) continue;
     seen.add(clean);
-    out.push(clean);
+    const slug = extractSubdlShowSlugFromCanonicalUrl(clean);
+    out.push({
+      url: clean,
+      slug,
+      sdId: extractSubdlSdIdFromUrl(clean),
+      hrefIndex: m.index
+    });
     if (out.length >= 30) break;
   }
   return out;
 }
 
-async function resolveSubdlTvCanonicalUrlsBySearch({ showTitle = "" }) {
+function applySubdlHtmlResolverDiagnostics(debugCounts, resolver) {
+  if (!debugCounts || !resolver) return;
+  debugCounts.subdlHtmlResolverUsed = Boolean(resolver.used);
+  debugCounts.subdlHtmlResolverSearchUrl = resolver.searchUrl || null;
+  debugCounts.subdlHtmlResolverCandidatesFound = Number(resolver.candidatesFound || 0);
+  debugCounts.subdlHtmlResolverChosenUrl = resolver.chosenUrl || null;
+  debugCounts.subdlHtmlResolverFoundSdId = resolver.foundSdId || null;
+  debugCounts.subdlHtmlResolverFailureReason = resolver.failureReason || null;
+  debugCounts.subdlHtmlResolverRequestedTitleNormalized =
+    resolver.requestedTitleNormalized || null;
+  debugCounts.subdlHtmlResolverCandidateEvaluations = Array.isArray(resolver.candidateEvaluations)
+    ? resolver.candidateEvaluations
+    : [];
+  debugCounts.subdlHtmlResolverSelectionStrategy = resolver.selectionStrategy || null;
+}
+
+function pickSubdlSearchResolverHit({ html, hits, acceptedSlugSet, imdbNorm, requestedTitleNorm }) {
+  const evaluations = [];
+  const acceptedArray = acceptedSlugSet instanceof Set ? acceptedSlugSet : new Set(acceptedSlugSet || []);
+
+  for (const hit of hits) {
+    const slug = hit.slug || "";
+    const titleNorm = normalizeSubdlResolverTitle(slug.replace(/-/g, " "));
+    let rejectReason = "";
+    let accepted = false;
+    let strategy = "";
+
+    if (imdbNorm && subdlSearchHtmlSnippetContainsImdb(html, hit.hrefIndex, imdbNorm)) {
+      accepted = true;
+      strategy = "external-imdb-snippet";
+    } else if (slug && acceptedArray.has(slug)) {
+      accepted = true;
+      strategy = "exact-series-slug";
+    } else if (!slug) {
+      rejectReason = "missing-show-slug-in-url";
+    } else if (acceptedArray.size === 0) {
+      rejectReason = "no-requested-title-slugs";
+    } else {
+      rejectReason = "title-slug-identity-mismatch";
+    }
+
+    evaluations.push({
+      candidateSlug: slug,
+      candidateTitleNormalized: titleNorm,
+      accepted,
+      rejectReason: accepted ? "" : rejectReason
+    });
+
+    if (accepted) {
+      return {
+        chosen: hit,
+        evaluations,
+        selectionStrategy: strategy,
+        requestedTitleNormalized: requestedTitleNorm
+      };
+    }
+  }
+
+  return {
+    chosen: null,
+    evaluations,
+    selectionStrategy: hits.length ? "none-passed-identity-gate" : "no-candidates-in-html",
+    requestedTitleNormalized: requestedTitleNorm
+  };
+}
+
+async function resolveSubdlTvCanonicalUrlsBySearch({
+  showTitle = "",
+  originalTitle = "",
+  imdbId = ""
+} = {}) {
   const title = String(showTitle || "").trim();
+  const original = String(originalTitle || "").trim();
   const strategy = {
     used: false,
     searchUrl: "",
     candidatesFound: 0,
     chosenUrl: "",
     foundSdId: "",
-    failureReason: ""
+    failureReason: "",
+    requestedTitleNormalized: "",
+    candidateEvaluations: [],
+    selectionStrategy: ""
   };
   if (!title) {
     strategy.failureReason = "missing-show-title";
     return strategy;
   }
+  const requestedTitleNorm = normalizeSubdlResolverTitle(title);
+  strategy.requestedTitleNormalized = requestedTitleNorm;
+  const acceptedSlugSet = buildSubdlResolverAcceptedSlugSet(title, original);
+  const imdbNorm = normalizeImdbIdForSubdlSnippet(imdbId);
+
   const query = encodeURIComponent(title.slice(0, 120));
   const candidates = [
     `https://subdl.com/search/${query}`,
@@ -1153,20 +1336,41 @@ async function resolveSubdlTvCanonicalUrlsBySearch({ showTitle = "" }) {
       if (!res.ok) continue;
       const html = await res.text();
       if (!html || html.length < 200) continue;
-      const links = parseSubdlCanonicalLinksFromHtml(html);
-      strategy.candidatesFound = links.length;
-      if (!links.length) continue;
-      strategy.chosenUrl = links[0];
-      strategy.foundSdId = extractSubdlSdIdFromUrl(links[0]);
+      const hits = parseSubdlCanonicalSearchHits(html);
+      strategy.candidatesFound = hits.length;
+      if (!hits.length) continue;
+
+      const picked = pickSubdlSearchResolverHit({
+        html,
+        hits,
+        acceptedSlugSet,
+        imdbNorm,
+        requestedTitleNorm
+      });
+      strategy.candidateEvaluations = picked.evaluations;
+      strategy.selectionStrategy = picked.selectionStrategy || "";
+
+      if (!picked.chosen) {
+        strategy.failureReason = "no-candidate-passed-identity-gate";
+        strategy.chosenUrl = "";
+        strategy.foundSdId = "";
+        return {
+          ...strategy,
+          canonicalLinks: []
+        };
+      }
+
+      strategy.chosenUrl = picked.chosen.url;
+      strategy.foundSdId = String(picked.chosen.sdId || "").trim() || extractSubdlSdIdFromUrl(picked.chosen.url);
       return {
         ...strategy,
-        canonicalLinks: links
+        canonicalLinks: [picked.chosen.url]
       };
     } catch {
       // try next search endpoint
     }
   }
-  strategy.failureReason = "no-canonical-links-found";
+  strategy.failureReason = strategy.failureReason || "no-canonical-links-found";
   return strategy;
 }
 
@@ -2156,7 +2360,7 @@ async function searchOpenSubtitles({
     throw new Error("OpenSubtitles search requires tmdb_id, imdb_id, or query");
   }
   const resolveLimit = Number.isFinite(Number(maxResolve)) ? Number(maxResolve) : Infinity;
-  const cacheTtl = Boolean(resolveDownloads) ? 90 * 1000 : OPENSUB_SEARCH_CACHE_TTL_MS;
+  const cacheTtl = Boolean(resolveDownloads) ? 4 * 60 * 1000 : OPENSUB_SEARCH_CACHE_TTL_MS;
   const key = cacheKey([
     "opensub-search",
     mediaType,
@@ -2201,48 +2405,63 @@ async function searchOpenSubtitles({
       );
     }
     const list = Array.isArray(payload?.data) ? payload.data : [];
-    const out = [];
+    const out = new Array(list.length);
+    const resolveJobs = [];
     for (let i = 0; i < list.length; i += 1) {
       const item = list[i];
       const shouldResolve = Boolean(resolveDownloads) && i < resolveLimit;
       if (!shouldResolve) {
         const skipReason = !resolveDownloads ? "resolve_disabled_for_request" : "beyond_resolve_budget";
-        out.push(
-          mapOpenSub(item, "", language, {
-            initialResolveFailureReason: skipReason
-          })
-        );
+        out[i] = mapOpenSub(item, "", language, {
+          initialResolveFailureReason: skipReason
+        });
         continue;
       }
-      try {
-        const link = await withTimeout(
-          openSubDownloadWithFallbackOnQuota(openSubFileId(item), token),
-          resolveTimeoutMs,
-          "opensubtitles.downloadResolve"
-        );
-        const trimmed = String(link || "").trim();
-        const direct = sanitizeOpenSubtitlesDirectDownloadUrl(trimmed);
-        let failureReason = "";
-        if (!direct) {
-          if (trimmed && isOpenSubtitlesSubtitleListingPageUrl(trimmed)) {
-            failureReason = "api_returned_subtitle_page_not_file";
-          } else if (!openSubFileId(item)) {
-            failureReason = "missing_file_id";
-          } else {
-            failureReason = "empty_or_non_direct_link_from_api";
+      resolveJobs.push({ i, item });
+    }
+    const conc = OPENSUB_DOWNLOAD_RESOLVE_CONCURRENCY;
+    for (let j = 0; j < resolveJobs.length; j += conc) {
+      const chunk = resolveJobs.slice(j, j + conc);
+      const settled = await Promise.all(
+        chunk.map(async ({ i, item }) => {
+          try {
+            const link = await withTimeout(
+              openSubDownloadWithFallbackOnQuota(openSubFileId(item), token),
+              resolveTimeoutMs,
+              "opensubtitles.downloadResolve"
+            );
+            const trimmed = String(link || "").trim();
+            const direct = sanitizeOpenSubtitlesDirectDownloadUrl(trimmed);
+            let failureReason = "";
+            if (!direct) {
+              if (trimmed && isOpenSubtitlesSubtitleListingPageUrl(trimmed)) {
+                failureReason = "api_returned_subtitle_page_not_file";
+              } else if (!openSubFileId(item)) {
+                failureReason = "missing_file_id";
+              } else {
+                failureReason = "empty_or_non_direct_link_from_api";
+              }
+            }
+            return {
+              i,
+              row: mapOpenSub(item, direct, language, { initialResolveFailureReason: failureReason })
+            };
+          } catch (err) {
+            logError("OpenSubtitles item download resolve failed", err, {
+              itemId: item?.id,
+              usedFallbackUrl: false
+            });
+            return {
+              i,
+              row: mapOpenSub(item, "", language, {
+                initialResolveFailureReason: String(err?.message || "download_resolve_failed").slice(0, 400)
+              })
+            };
           }
-        }
-        out.push(mapOpenSub(item, direct, language, { initialResolveFailureReason: failureReason }));
-      } catch (err) {
-        out.push(
-          mapOpenSub(item, "", language, {
-            initialResolveFailureReason: String(err?.message || "download_resolve_failed").slice(0, 400)
-          })
-        );
-        logError("OpenSubtitles item download resolve failed", err, {
-          itemId: item?.id,
-          usedFallbackUrl: false
-        });
+        })
+      );
+      for (const { i, row } of settled) {
+        out[i] = row;
       }
     }
     return { items: out, rawCount: list.length };
@@ -2772,6 +2991,10 @@ function summarizeSubtitlePipeline(sortCtx, sorted, finalList, debugCounts) {
       htmlResolverChosenUrl: debugCounts.subdlHtmlResolverChosenUrl || null,
       htmlResolverFoundSdId: debugCounts.subdlHtmlResolverFoundSdId || null,
       htmlResolverFailureReason: debugCounts.subdlHtmlResolverFailureReason || null,
+      htmlResolverRequestedTitleNormalized:
+        debugCounts.subdlHtmlResolverRequestedTitleNormalized || null,
+      htmlResolverCandidateEvaluations: debugCounts.subdlHtmlResolverCandidateEvaluations || [],
+      htmlResolverSelectionStrategy: debugCounts.subdlHtmlResolverSelectionStrategy || null,
       htmlCandidateUrlsTried: debugCounts.subdlHtmlCandidateUrlsTried || [],
       htmlFetchStatus: debugCounts.subdlHtmlFetchStatus || [],
       htmlAnyCandidateReturnedHtml: Boolean(debugCounts.subdlHtmlAnyCandidateReturnedHtml),
@@ -2842,7 +3065,11 @@ function summarizeSubtitlePipeline(sortCtx, sorted, finalList, debugCounts) {
     },
     mergeAndDedupe: {
       combinedBeforeDedup: debugCounts.beforeDedup,
-      afterDedup: debugCounts.afterDedup
+      afterDedup: debugCounts.afterDedup,
+      aggregateParallelized: Boolean(debugCounts.aggregateParallelized),
+      aggregateDurationMs: debugCounts.aggregateDurationMs ?? null,
+      subdlDurationMs: debugCounts.subdlDurationMs ?? null,
+      opensubtitlesDurationMs: debugCounts.opensubtitlesDurationMs ?? null
     },
     byTvMatchPerProvider: {
       afterSortScored: fold(sorted).byProviderTvMatch,
@@ -3067,6 +3294,9 @@ export async function aggregateSubtitles({
     subdlHtmlResolverChosenUrl: null,
     subdlHtmlResolverFoundSdId: null,
     subdlHtmlResolverFailureReason: null,
+    subdlHtmlResolverRequestedTitleNormalized: null,
+    subdlHtmlResolverCandidateEvaluations: [],
+    subdlHtmlResolverSelectionStrategy: null,
     subdlHtmlCandidateUrlsTried: [],
     subdlHtmlFetchStatus: [],
     subdlHtmlAnyCandidateReturnedHtml: false,
@@ -3118,16 +3348,33 @@ export async function aggregateSubtitles({
     episodeHtmlExactKeptRows: 0,
     episodeHtmlRejectedRows: 0,
     exactEpisodeEvidenceSamples: [],
-    episodeHtmlRecognized5x08Style: false
+    episodeHtmlRecognized5x08Style: false,
+    aggregateParallelized: false,
+    subdlDurationMs: null,
+    opensubtitlesDurationMs: null,
+    aggregateDurationMs: null
   };
   const providerErrors = [];
   let successCount = 0;
-  const subtitles = [];
+  const subdlAcc = [];
+  const openRows = [];
+  const providerErrorsSubdl = [];
+  const providerErrorsOpen = [];
+  let subdlSuccessIncr = 0;
+  let openSuccessIncr = 0;
 
-  if (requested.includes("subdl")) {
-    if (!SUBDL_API_KEY) {
-      providerErrors.push({ provider: "subdl", message: "SUBDL_API_KEY is not configured" });
-    } else {
+  debugCounts.aggregateParallelized =
+    requested.includes("subdl") && requested.includes("opensubtitles");
+
+  const pSubdl = (async () => {
+    const t0 = Date.now();
+    const subtitles = subdlAcc;
+    try {
+      if (!requested.includes("subdl")) return;
+      if (!SUBDL_API_KEY) {
+        providerErrorsSubdl.push({ provider: "subdl", message: "SUBDL_API_KEY is not configured" });
+        return;
+      }
       try {
         const subdlLangSent = subdlLanguagesQueryParam(language);
         const subdlCommon = {
@@ -3316,7 +3563,11 @@ export async function aggregateSubtitles({
             episode_number: epStr,
             ...subdlCommon
           };
-          const showTitleRawEpisode = await fetchTmdbTvNameForSubdl(tmdbId);
+          const {
+            primary: showTitleRawEpisode,
+            original: showTitleOriginalEpisode,
+            imdbId: showImdbEpisode
+          } = await fetchTmdbTvNameForSubdl(tmdbId);
           const showTitleEp = sanitizeSubdlFilmNameForQuery(showTitleRawEpisode);
 
           let ok = await runSubdlAttempt("exactEpisodeTmdb", exactTmdb);
@@ -3390,8 +3641,11 @@ export async function aggregateSubtitles({
               let htmlCandidates = [];
               try {
                 const resolver = await resolveSubdlTvCanonicalUrlsBySearch({
-                  showTitle: showTitleRawEpisode || showTitleEp
+                  showTitle: showTitleRawEpisode || showTitleEp,
+                  originalTitle: showTitleOriginalEpisode,
+                  imdbId: showImdbEpisode
                 });
+                applySubdlHtmlResolverDiagnostics(debugCounts, resolver);
                 const resolverSdId = String(resolver.foundSdId || "").trim();
                 const resolverLinks = Array.isArray(resolver.canonicalLinks) ? resolver.canonicalLinks : [];
                 const seasonSlugList = seasonSlugVariants(season);
@@ -3404,7 +3658,7 @@ export async function aggregateSubtitles({
                   season
                 });
                 if (resolverSeasonCandidates.length) {
-                  htmlCandidates = Array.from(new Set([...resolverSeasonCandidates, ...htmlCandidates])).slice(0, 30);
+                  htmlCandidates = Array.from(new Set([...resolverSeasonCandidates, ...htmlCandidates])).slice(0, 22);
                 }
               } catch (err) {
                 logError("SubDL episode HTML candidate build failed", err, {
@@ -3558,7 +3812,11 @@ export async function aggregateSubtitles({
             },
             { mergeHits: true }
           );
-          const showTitleRaw = await fetchTmdbTvNameForSubdl(tmdbId);
+          const {
+            primary: showTitleRaw,
+            original: showTitleOriginal,
+            imdbId: showImdbTv
+          } = await fetchTmdbTvNameForSubdl(tmdbId);
           const showTitle = sanitizeSubdlFilmNameForQuery(showTitleRaw);
           if (showTitle) {
             await runSubdlAttemptSafe(
@@ -3683,14 +3941,11 @@ export async function aggregateSubtitles({
             let htmlCandidates = [];
             try {
               const resolver = await resolveSubdlTvCanonicalUrlsBySearch({
-                showTitle: showTitleRaw || showTitle
+                showTitle: showTitleRaw || showTitle,
+                originalTitle: showTitleOriginal,
+                imdbId: showImdbTv
               });
-              debugCounts.subdlHtmlResolverUsed = Boolean(resolver.used);
-              debugCounts.subdlHtmlResolverSearchUrl = resolver.searchUrl || null;
-              debugCounts.subdlHtmlResolverCandidatesFound = Number(resolver.candidatesFound || 0);
-              debugCounts.subdlHtmlResolverChosenUrl = resolver.chosenUrl || null;
-              debugCounts.subdlHtmlResolverFoundSdId = resolver.foundSdId || null;
-              debugCounts.subdlHtmlResolverFailureReason = resolver.failureReason || null;
+              applySubdlHtmlResolverDiagnostics(debugCounts, resolver);
               const resolverSdId = String(resolver.foundSdId || "").trim();
               const resolverLinks = Array.isArray(resolver.canonicalLinks) ? resolver.canonicalLinks : [];
               const seasonSlugList = seasonSlugVariants(season);
@@ -3726,7 +3981,7 @@ export async function aggregateSubtitles({
                     season
                   })
                 );
-                htmlCandidates = Array.from(new Set([...resolverSeasonCandidates, ...built])).slice(0, 52);
+                htmlCandidates = Array.from(new Set([...resolverSeasonCandidates, ...built])).slice(0, 40);
               } else {
                 htmlCandidates = buildSubdlSeasonPageCandidates({
                   sdId: resolverSdId || subdlHtmlSeedSdId,
@@ -3736,7 +3991,7 @@ export async function aggregateSubtitles({
                 if (resolverSeasonCandidates.length) {
                   htmlCandidates = Array.from(new Set([...resolverSeasonCandidates, ...htmlCandidates])).slice(
                     0,
-                    30
+                    22
                   );
                 }
               }
@@ -4154,22 +4409,26 @@ export async function aggregateSubtitles({
         debugCounts.subdlSeasonBroadMergedLangs = countByNormalizedSubtitleLang(
           subtitles.filter((row) => String(row.provider || "") === "subdl" && row.subdlProbe === "seasonModeFilmNameBroad")
         );
-        successCount += 1;
+        subdlSuccessIncr = 1;
       } catch (err) {
-        providerErrors.push({ provider: "subdl", message: err.message });
+        providerErrorsSubdl.push({ provider: "subdl", message: err.message });
       }
+    } finally {
+      debugCounts.subdlDurationMs = Date.now() - t0;
     }
-  }
+  })();
 
-  debugCounts.perProviderAfterSubdl = countByProvider(subtitles);
-
-  if (requested.includes("opensubtitles")) {
-    if (!OPENSUBTITLES_API_KEY) {
-      providerErrors.push({
-        provider: "opensubtitles",
-        message: "OPENSUBTITLES_API_KEY is not configured"
-      });
-    } else {
+  const pOpen = (async () => {
+    const t1 = Date.now();
+    try {
+      if (!requested.includes("opensubtitles")) return;
+      if (!OPENSUBTITLES_API_KEY) {
+        providerErrorsOpen.push({
+          provider: "opensubtitles",
+          message: "OPENSUBTITLES_API_KEY is not configured"
+        });
+        return;
+      }
       try {
         const allResults = [];
         let rawSum = 0;
@@ -4478,13 +4737,25 @@ export async function aggregateSubtitles({
         debugCounts.opensubtitlesMovieAttempts = openSubAttempts;
         debugCounts.opensubtitlesRaw = rawSum;
         debugCounts.opensubtitlesMapped = allResults.length;
-        subtitles.push(...allResults);
-        successCount += 1;
+        openRows.push(...allResults);
+        openSuccessIncr = 1;
       } catch (err) {
-        providerErrors.push({ provider: "opensubtitles", message: err.message });
+        providerErrorsOpen.push({ provider: "opensubtitles", message: err.message });
       }
+    } finally {
+      debugCounts.opensubtitlesDurationMs = Date.now() - t1;
     }
-  }
+  })();
+
+  const _aggregateWallMs = Date.now();
+  await Promise.all([pSubdl, pOpen]);
+  debugCounts.aggregateDurationMs = Date.now() - _aggregateWallMs;
+
+  const subtitles = [...subdlAcc, ...openRows];
+  providerErrors.push(...providerErrorsSubdl, ...providerErrorsOpen);
+  successCount = subdlSuccessIncr + openSuccessIncr;
+
+  debugCounts.perProviderAfterSubdl = countByProvider(subdlAcc);
 
   debugCounts.perProviderMergedBeforeDedupe = countByProvider(subtitles);
   debugCounts.beforeDedup = subtitles.length;
