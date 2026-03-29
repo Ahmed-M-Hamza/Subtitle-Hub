@@ -1,3 +1,5 @@
+# `npm run build` runs scripts/generate-launch-seo.mjs. Netlify sets URL / DEPLOY_PRIME_URL so
+# public/robots.txt and public/sitemap.xml use the deploy origin (listed in .gitignore).
 [build]
   command = "npm run build"
   publish = "public"

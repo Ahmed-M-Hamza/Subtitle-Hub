@@ -1,3 +1,10 @@
+import {
+  AnalyticsEvent,
+  contextFromRoute,
+  subtitlesViewContext,
+  trackProductEvent
+} from "./analytics.js";
+
 const appEl = document.getElementById("app");
 const globalSearchForm = document.getElementById("globalSearchForm");
 const globalSearchInput = document.getElementById("globalSearchInput");
@@ -10,6 +17,7 @@ const CONTINUE_SEEDED_KEY = "subtitlehub.continueSeededFromRecent";
 const MAX_CONTINUE_ITEMS = 10;
 const MAX_RECENT_SEARCHES = 8;
 const SUBTITLE_PREFS_KEY = "subtitlehub.subtitlePrefs";
+/** Persisted UI language; mirrored by the inline bootstrap in `public/index.html` for first-paint shell text and `html` lang/dir. */
 const APP_LANG_KEY = "subtitlehub.uiLang";
 const APP_THEME_KEY = "subtitlehub.uiTheme";
 /** Developer-only: `localStorage.setItem("subtitlehub.devDiagnostics", "1")` or `?diagnostics=1`. */
@@ -128,7 +136,7 @@ const UI_TEXT = {
     viewSubtitles: "عرض الترجمات",
     loadMore: "عرض المزيد",
     searching: "جارٍ البحث...",
-    searchFailed: "فشل البحث",
+    searchFailed: "تعذر إكمال البحث",
     breadcrumb: "مسار التنقل",
     subtitleTypeMovie: "فيلم",
     subtitleTypeTv: "مسلسل",
@@ -147,9 +155,9 @@ const UI_TEXT = {
     showSubtitlesBtn: "عرض الترجمات",
     backToSearch: "عودة للبحث",
     loadingMedia: "جارٍ تحميل تفاصيل العمل...",
-    invalidTmdbId: "معرّف TMDb غير صالح.",
-    workNotFound: "تعذر العثور على العمل المطلوب.",
-    mediaLoadFailed: "فشل تحميل تفاصيل العمل",
+    invalidTmdbId: "رقم العمل غير صالح. ارجع للبحث واختر عنوانًا من النتائج.",
+    workNotFound: "لم نعثر على هذا العنوان. جرّب البحث باسم آخر.",
+    mediaLoadFailed: "تعذر تحميل تفاصيل العمل",
     subtitleFiltersTitle: "فلاتر الترجمة",
     applyInstant: "قابلة للتطبيق فورًا",
     searchInResults: "بحث داخل النتائج",
@@ -168,10 +176,22 @@ const UI_TEXT = {
     subtitleResultsTitle: "نتائج الترجمة",
     noResults: "لا نتائج",
     loadingSubtitles: "جارٍ تحميل الترجمات...",
-    subtitlesLoadFailed: "فشل تحميل الترجمات",
+    subtitlesLoadFailed: "تعذر تحميل الترجمات",
     limitedResultsNotice: "بعض النتائج قد تكون محدودة الآن. نعرض أفضل المصادر المتاحة.",
     pageNotFound: "الصفحة غير موجودة",
-    pageNotFoundDesc: "تعذر العثور على المسار المطلوب.",
+    pageNotFoundDesc: "الرابط غير صالح أو لم يعد متاحًا. ارجع للرئيسية أو استخدم البحث للعثور على عنوانك.",
+    errorNotFoundBadge: "404",
+    errorTryAgainShort: "يمكنك المحاولة مرة أخرى بعد لحظات.",
+    errorTryAgainHint: "إذا استمرت المشكلة، جرّب تحديث الصفحة أو العودة لاحقًا.",
+    brandTagline: "بحث ترجمات أوضح",
+    brandAriaLabel: "Subtitle Hub — الصفحة الرئيسية",
+    metaTitleMediaNamed: "{title} | Subtitle Hub",
+    metaDescMediaNamed: "تفاصيل العمل وخيارات الترجمة على Subtitle Hub.",
+    metaDescMediaPageGeneric: "تفاصيل الأفلام والمسلسلات وخيارات الترجمة.",
+    metaTitleSubtitlesNamed: "{title} · ترجمات | Subtitle Hub",
+    metaDescSubtitlesNamed: "تصفح وفلترة ترجمات {title} على Subtitle Hub.",
+    metaDescSubtitlesPageGeneric: "تصفح وفلترة ترجمات هذا العنوان من مصادر متعددة.",
+    metaOgImageAlt: "Subtitle Hub",
     uploader: "الرافع",
     unknown: "غير معروف",
     confidence: "ثقة",
@@ -233,7 +253,135 @@ const UI_TEXT = {
     subtitleEmptyFilteredOut: "لا توجد عناصر بهذه الفلاتر في هذه القائمة.",
     languageGroupArabic: "العربية",
     languageGroupEnglish: "الإنجليزية",
-    languageGroupUndetermined: "لغات أخرى / غير محددة"
+    languageGroupUndetermined: "لغات أخرى / غير محددة",
+    subMatchTypeExact: "مطابقة الحلقة",
+    subMatchTypePack: "باك الموسم",
+    subMatchTypeScoped: "ترجمة الموسم",
+    subMatchTypeMovie: "فيلم",
+    subMatchTypeLowerConfidence: "تطابق أضعف",
+    subCardWhyPreview: "لماذا هذه النتيجة",
+    directSourceShort: "المصدر",
+    downloadSubtitle: "تحميل الترجمة",
+    viewSource: "عرض المصدر",
+    openSubtitlesUnavailable: "هذه الترجمة لم تعد متاحة من هذا المصدر.",
+    openSubtitlesUnavailableHint: "جرّب نتيجة أخرى من القائمة.",
+    openSubtitlesQuotaReached:
+      "تم الوصول إلى الحد اليومي لتحميل OpenSubtitles حاليًا. جرّب مصدرًا آخر أو أعد المحاولة لاحقًا.",
+    openSubtitlesResolving: "جارٍ جلب رابط التحميل…",
+    openSubtitlesNoFileId: "لا يتوفر معرّف ملف صالح لهذه الترجمة من OpenSubtitles.",
+    sourceTrustHigh: "مصدر موثوق",
+    subtitleCardsInSection: "ترجمات",
+    filesCountShort: "ملف",
+    rankBreakLang: "اللغة",
+    rankBreakEpisode: "المطابقة",
+    rankBreakTvTier: "TV",
+    rankBreakProvider: "المزوّد",
+    rankBreakFilename: "الملف",
+    rankBreakComplete: "الاكتمال",
+    loadMoreSubtitles: "عرض المزيد من النتائج",
+    providerHealthBannerPartialOutage:
+      "نعرض أفضل النتائج من المصادر التي استجابت. أحد المصادر غير متاح مؤقتًا.",
+    providerHealthBannerPartialOutageLimited:
+      "قد يكون أحد المصادر محدودًا الآن (مثل حد استخدام مؤقت). النتائج تعكس ما هو متاح حاليًا.",
+    providerHealthBannerPartialCatalog:
+      "دمجنا كل التطابقات المتاحة؛ أحد الفهارس لم يُرجع نتائج واضحة لهذا العنوان.",
+    providerHealthBannerSparse: "قائمة النتائج أقصر من المعتاد — جرّب توسيع اللغة أو نطاق البحث.",
+    providerHealthBannerFallback: "استخدمنا مسارًا إضافيًا لتحسين التغطية قدر الإمكان.",
+    providerHealthBannerNoMatches: "لم نجد ترجمات من المصادر المتاحة لهذا الاستعلام. يمكنك توسيع الخيارات أدناه.",
+    providerHealthEmptyAsideOneSourceDown: "تغطية المصادر أضيق من المعتاد؛ جرّب مصدرًا آخر أو لغة أوسع.",
+    providerHealthEmptyAsideNarrow: "قد تكون النتائج محدودة لهذا العنوان — توسيع اللغة أو الموسم قد يساعد.",
+    providerHealthEmptyAsideLimited: "أحد المصادر قد يكون مؤقتًا محدودًا؛ الخطوات أدناه قد تعرض خيارات إضافية.",
+    providerHealthBestPickFootnote: "التغطية أضيق من المعتاد — راجع القائمة الكاملة وقرّر ما يناسبك.",
+    providerHealthPillShowingOpenSub: "النتائج من OpenSubtitles",
+    providerHealthPillShowingSubdl: "النتائج من SubDL",
+    providerHealthPillNarrowResults: "قائمة مختصرة",
+    subtitleInsightSeasonAltsFiltered: "بدائل الموسم (بعد الفلاتر)",
+    globalSearchAriaLabel: "بحث سريع في الموقع",
+    mainNavAriaLabel: "التنقل الرئيسي",
+    langSwitcherAriaLabel: "اختيار اللغة",
+    searchFiltersMeta: "فلاتر ذكية",
+    searchQueryExamplePlaceholder: "مثال: Interstellar",
+    searchYearExamplePlaceholder: "2014",
+    typeaheadEmpty: "لا توجد اقتراحات",
+    typeaheadLoading: "جارٍ جلب الاقتراحات...",
+    newBadge: "جديد",
+    homeBadgeEnglishShort: "EN",
+    metaDescriptionDefault: "اكتشف الترجمات بسرعة بتجربة حديثة ومرتبة.",
+    metaTitleHome: "Subtitle Hub | اكتشف ترجمات الأفلام والمسلسلات",
+    metaTitleSearch: "Subtitle Hub | بحث العناوين",
+    metaTitleMedia: "تفاصيل العمل | Subtitle Hub",
+    metaTitleSubtitles: "نتائج الترجمة | Subtitle Hub",
+    metaSearchDescPrefix: "نتائج بحث مرتبة لعنوان ",
+    metaSearchDescSuffix: " مع وصول سريع للترجمات.",
+    noGenresHint: "لا تتوفر تصنيفات لهذا العمل.",
+    statMinutesUnit: "دقيقة",
+    statSeasonsUnit: "مواسم",
+    statEpisodesUnit: "حلقة",
+    statSeasonsMetaLabel: "المواسم",
+    mediaSeasonEpisodeChipsTemplate: "الموسم {n} • {count} حلقات",
+    continueSeasonPrefix: "م",
+    continueEpisodePrefix: "ح",
+    tvMustPickSeasonBeforeStrong: "يجب اختيار ",
+    tvMustPickSeasonStrong: "رقم الموسم",
+    tvMustPickSeasonAfterStrong: " أولًا قبل البحث عن ترجمات المسلسل. ",
+    tvMustPickSeasonNoBroadSearch: "لا نُشغّل بحثًا عامًا بدون موسم حتى لا تظهر نتائج مضللة.",
+    tvMustPickSeasonNextSteps:
+      "اذهب إلى صفحة تفاصيل العمل، أدخل الموسم (والحلقة لاحقًا إن أردت ترجمات حلقة محددة)، ثم افتح صفحة الترجمات من هناك.",
+    backToSeasonSelection: "العودة لتحديد الموسم",
+    tvSeasonEpisodePanelTitle: "اختيار الموسم والحلقة",
+    tvSeasonEpisodePanelSub:
+      "الموسم مطلوب — الحلقة اختيارية (بدون حلقة: كل ترجمات الموسم، بما فيها ترجمات الحلقات من نفس الموسم)",
+    fileMatchPlaceholderExample: "Movie.2024.1080p.WEB-DL.x264-GROUP.mkv",
+    videoFilenameOptionalLabel: "اسم ملف الفيديو (اختياري)",
+    searchInResultsPlaceholder: "اسم الإصدار أو الملاحظات...",
+    filterHelpHint: "يمكنك التصفية حسب الجودة والمصدر والترميز مباشرة.",
+    resultsSummaryLanguage: "اللغة",
+    resultsSummaryProvider: "المزوّد",
+    backToSearchWithArrow: "← العودة للبحث",
+    loadMoreAlternates: "عرض المزيد من البدائل",
+    activeFilterTvMatch: "تطابق المسلسل",
+    insightFilenameMatchOn: "مطابقة الملف: مفعّلة",
+    insightTvMatchFilterPill: "تصفية نوع الترجمة",
+    insightActiveFilters: "فلاتر نشطة",
+    subtitleFilterSidebarFooter: "يمكنك البحث عن فيلم آخر مباشرة من شريط البحث بالأعلى بدون الرجوع.",
+    tvChipBarAria: "تصفية نوع تطابق ترجمة المسلسل",
+    tvChipBarTitle: "تصفية سريعة حسب نوع التطابق",
+    tvChipBarShowAll: "إظهار الكل",
+    selectSeasonFirst: "اختر الموسم أولًا",
+    selectSeasonPrompt: "اختر الموسم",
+    subtitleSeasonOptionTemplate: "الموسم {n}",
+    subtitleEpisodeOptionTemplate: "الحلقة {n}",
+    bestPickReasonArabicAvailable: "عربي متاح",
+    bestPickFallbackExcellent: "ثقة ممتازة في ترتيب النظام",
+    bestPickFallbackStrong: "تطابق قوي ضمن النتائج الحالية",
+    confidenceExcellent: "ممتاز",
+    confidenceStrong: "قوي",
+    confidenceMedium: "متوسط",
+    hiFilterLabel: "SDH / HI",
+    hiFilterOnly: "فقط HI",
+    hiFilterExclude: "استبعاد HI",
+    hiSdhTag: "HI / SDH",
+    presetBestMatch: "أفضل تطابق",
+    presetNonHi: "بدون HI",
+    presetArabic: "عربي",
+    presetEnglish: "إنجليزي",
+    presetClear: "مسح الاختيارات",
+    reasonExactEpisodeMatch: "مطابقة مباشرة للحلقة",
+    reasonSeasonPackMatch: "حزمة موسم كاملة",
+    reasonSeasonGenericMatch: "ترجمة عامة للموسم",
+    reasonExactLanguageMatch: "اللغة المطلوبة متاحة",
+    reasonTrustedProvider: "مصدر موثوق",
+    reasonHighDownloads: "تنزيلات كثيرة",
+    reasonStrongFilenameMatch: "تطابق قوي مع الإصدار",
+    reasonCompleteMetadata: "بيانات إصدار غنية",
+    tvAlternateLeadWithMain: "يوجد أيضاً بدائل على مستوى الموسم أدناه — ليست مطابقة حلقة دقيقة.",
+    tvAlternateLeadNoExact: "لم نجد ترجمة مطابقة للحلقة، لكن وجدنا بدائل من نفس الموسم.",
+    tvAlternateHintPack: "باك الموسم قد يشمل حلقات متعددة.",
+    tvAlternateHintScoped: "الترجمات على مستوى الموسم قد تفيد حتى من دون مطابقة الحلقة.",
+    subtitleHiAbbr: "HI",
+    releasesJoinSeparator: "، ",
+    inlineListSeparator: "، ",
+    mediaDetailFileMatchPlaceholder: "Example.Show.S01E02.1080p.WEB-DL.x264"
   },
   en: {
     navHome: "Home",
@@ -335,7 +483,7 @@ const UI_TEXT = {
     viewSubtitles: "View subtitles",
     loadMore: "Load more",
     searching: "Searching...",
-    searchFailed: "Search failed",
+    searchFailed: "We couldn't complete this search",
     breadcrumb: "Breadcrumb",
     subtitleTypeMovie: "Movie",
     subtitleTypeTv: "TV show",
@@ -354,9 +502,9 @@ const UI_TEXT = {
     showSubtitlesBtn: "Show subtitles",
     backToSearch: "Back to search",
     loadingMedia: "Loading media details...",
-    invalidTmdbId: "Invalid TMDb ID.",
-    workNotFound: "Requested title was not found.",
-    mediaLoadFailed: "Failed to load media details",
+    invalidTmdbId: "Invalid title reference. Go back to search and pick a result.",
+    workNotFound: "We could not find that title. Try a different search.",
+    mediaLoadFailed: "We could not load title details",
     subtitleFiltersTitle: "Subtitle filters",
     applyInstant: "Applied instantly",
     searchInResults: "Search in results",
@@ -375,10 +523,22 @@ const UI_TEXT = {
     subtitleResultsTitle: "Subtitle results",
     noResults: "No results",
     loadingSubtitles: "Loading subtitles...",
-    subtitlesLoadFailed: "Failed to load subtitles",
+    subtitlesLoadFailed: "We couldn't load subtitles",
     limitedResultsNotice: "Some results may be limited right now. Showing the best available sources.",
     pageNotFound: "Page not found",
-    pageNotFoundDesc: "The requested route could not be found.",
+    pageNotFoundDesc: "This link is invalid or no longer available. Head home or search for a title.",
+    errorNotFoundBadge: "404",
+    errorTryAgainShort: "Please try again in a moment.",
+    errorTryAgainHint: "If it keeps happening, refresh the page or try again later.",
+    brandTagline: "Clearer subtitle search",
+    brandAriaLabel: "Subtitle Hub — Home",
+    metaTitleMediaNamed: "{title} | Subtitle Hub",
+    metaDescMediaNamed: "Title details and subtitle options on Subtitle Hub.",
+    metaDescMediaPageGeneric: "Movie and TV details with subtitle options.",
+    metaTitleSubtitlesNamed: "{title} · Subtitles | Subtitle Hub",
+    metaDescSubtitlesNamed: "Browse and filter subtitles for {title} on Subtitle Hub.",
+    metaDescSubtitlesPageGeneric: "Browse and filter subtitles for this title from multiple sources.",
+    metaOgImageAlt: "Subtitle Hub",
     uploader: "Uploader",
     unknown: "Unknown",
     confidence: "Confidence",
@@ -440,12 +600,167 @@ const UI_TEXT = {
     subtitleEmptyFilteredOut: "Nothing in this list matches your filters.",
     languageGroupArabic: "Arabic",
     languageGroupEnglish: "English",
-    languageGroupUndetermined: "Other languages"
+    languageGroupUndetermined: "Other languages",
+    subMatchTypeExact: "Exact episode",
+    subMatchTypePack: "Season pack",
+    subMatchTypeScoped: "Season-level",
+    subMatchTypeMovie: "Movie",
+    subMatchTypeLowerConfidence: "Weaker match",
+    subCardWhyPreview: "Why this result",
+    directSourceShort: "Source",
+    downloadSubtitle: "Download subtitle",
+    viewSource: "View source",
+    openSubtitlesUnavailable: "This subtitle is no longer available from this source.",
+    openSubtitlesUnavailableHint: "Try another result from the list.",
+    openSubtitlesQuotaReached:
+      "OpenSubtitles download quota has been reached for now. Try another source or try again later.",
+    openSubtitlesResolving: "Fetching download link…",
+    openSubtitlesNoFileId: "No valid OpenSubtitles file id for this row.",
+    sourceTrustHigh: "Trusted source",
+    subtitleCardsInSection: "subtitles",
+    filesCountShort: "files",
+    rankBreakLang: "Language",
+    rankBreakEpisode: "Match",
+    rankBreakTvTier: "TV tier",
+    rankBreakProvider: "Provider",
+    rankBreakFilename: "Filename",
+    rankBreakComplete: "Completeness",
+    loadMoreSubtitles: "Load more results",
+    providerHealthBannerPartialOutage:
+      "Showing the best results from the sources that responded. One source is temporarily unavailable.",
+    providerHealthBannerPartialOutageLimited:
+      "A source may be temporarily limited (for example a daily cap). Results reflect what is available right now.",
+    providerHealthBannerPartialCatalog:
+      "We merged everything available; one catalog did not return clear matches for this title.",
+    providerHealthBannerSparse: "This list is shorter than usual — try broadening language or search scope.",
+    providerHealthBannerFallback: "We used an extra retrieval path to improve coverage where possible.",
+    providerHealthBannerNoMatches: "No subtitles were returned from available sources for this query. Try broadening options below.",
+    providerHealthEmptyAsideOneSourceDown: "Source coverage is narrower than usual — try another source or a wider language.",
+    providerHealthEmptyAsideNarrow: "Matches may be limited for this title — broadening language or season can help.",
+    providerHealthEmptyAsideLimited: "A source may be temporarily limited; the steps below may surface more options.",
+    providerHealthBestPickFootnote: "Coverage is narrower than usual — scan the full list and choose what fits.",
+    providerHealthPillShowingOpenSub: "Results from OpenSubtitles",
+    providerHealthPillShowingSubdl: "Results from SubDL",
+    providerHealthPillNarrowResults: "Short list",
+    subtitleInsightSeasonAltsFiltered: "Season alternates (filtered)",
+    globalSearchAriaLabel: "Site search",
+    mainNavAriaLabel: "Main navigation",
+    langSwitcherAriaLabel: "Language",
+    searchFiltersMeta: "Smart filters",
+    searchQueryExamplePlaceholder: "Example: Interstellar",
+    searchYearExamplePlaceholder: "2014",
+    typeaheadEmpty: "No suggestions",
+    typeaheadLoading: "Loading suggestions...",
+    newBadge: "New",
+    homeBadgeEnglishShort: "EN",
+    metaDescriptionDefault: "Discover subtitles fast with a modern curated experience.",
+    metaTitleHome: "Subtitle Hub | Discover movie and TV subtitles",
+    metaTitleSearch: "Subtitle Hub | Search titles",
+    metaTitleMedia: "Title details | Subtitle Hub",
+    metaTitleSubtitles: "Subtitle results | Subtitle Hub",
+    metaSearchDescPrefix: "Ranked search results for ",
+    metaSearchDescSuffix: " with fast subtitle access.",
+    noGenresHint: "No genres listed for this title.",
+    statMinutesUnit: "min",
+    statSeasonsUnit: "seasons",
+    statEpisodesUnit: "episodes",
+    statSeasonsMetaLabel: "Seasons",
+    mediaSeasonEpisodeChipsTemplate: "Season {n} • {count} eps",
+    continueSeasonPrefix: "S",
+    continueEpisodePrefix: "E",
+    tvMustPickSeasonBeforeStrong: "Select a ",
+    tvMustPickSeasonStrong: "season number",
+    tvMustPickSeasonAfterStrong: " before searching for TV subtitles. ",
+    tvMustPickSeasonNoBroadSearch: "We do not run a broad search without a season so results stay accurate.",
+    tvMustPickSeasonNextSteps:
+      "Open the title page, choose the season (and episode if you want episode-specific subtitles), then open subtitles from there.",
+    backToSeasonSelection: "Back to season selection",
+    tvSeasonEpisodePanelTitle: "Season & episode selection",
+    tvSeasonEpisodePanelSub:
+      "Season is required; episode is optional (no episode = season-level subtitles, including same-season episodes).",
+    fileMatchPlaceholderExample: "Movie.2024.1080p.WEB-DL.x264-GROUP.mkv",
+    videoFilenameOptionalLabel: "Video filename (optional)",
+    searchInResultsPlaceholder: "Release name or notes...",
+    filterHelpHint: "You can filter directly by resolution, source, and codec.",
+    resultsSummaryLanguage: "Language",
+    resultsSummaryProvider: "Provider",
+    backToSearchWithArrow: "← Back to search",
+    loadMoreAlternates: "Load more alternates",
+    activeFilterTvMatch: "TV match",
+    insightFilenameMatchOn: "Filename matching: on",
+    insightTvMatchFilterPill: "TV match filter",
+    insightActiveFilters: "Active filters",
+    subtitleFilterSidebarFooter: "Search for another title from the bar above without going back.",
+    tvChipBarAria: "Filter TV subtitle match type",
+    tvChipBarTitle: "Quick filter by match type",
+    tvChipBarShowAll: "Show all",
+    selectSeasonFirst: "Select season first",
+    selectSeasonPrompt: "Select season",
+    subtitleSeasonOptionTemplate: "Season {n}",
+    subtitleEpisodeOptionTemplate: "Episode {n}",
+    bestPickReasonArabicAvailable: "Arabic available",
+    bestPickFallbackExcellent: "Excellent confidence from ranking",
+    bestPickFallbackStrong: "Strong match among current results",
+    confidenceExcellent: "Excellent",
+    confidenceStrong: "Strong",
+    confidenceMedium: "Medium",
+    hiFilterLabel: "SDH / HI",
+    hiFilterOnly: "HI only",
+    hiFilterExclude: "Exclude HI",
+    hiSdhTag: "HI / SDH",
+    presetBestMatch: "Best match",
+    presetNonHi: "Non-HI",
+    presetArabic: "Arabic",
+    presetEnglish: "English",
+    presetClear: "Clear",
+    reasonExactEpisodeMatch: "Exact episode match",
+    reasonSeasonPackMatch: "Season pack",
+    reasonSeasonGenericMatch: "Season-wide match",
+    reasonExactLanguageMatch: "Language match",
+    reasonTrustedProvider: "Trusted source",
+    reasonHighDownloads: "Popular download",
+    reasonStrongFilenameMatch: "Strong release match",
+    reasonCompleteMetadata: "Rich release metadata",
+    tvAlternateLeadWithMain: "Season-level alternatives are also available below (not exact episode matches).",
+    tvAlternateLeadNoExact: "No exact episode subtitle found, but season alternatives are available.",
+    tvAlternateHintPack: "Season packs may include multiple episodes.",
+    tvAlternateHintScoped: "Season-scoped subtitles can still be useful without exact episode matching.",
+    subtitleHiAbbr: "HI",
+    releasesJoinSeparator: "; ",
+    inlineListSeparator: ", ",
+    mediaDetailFileMatchPlaceholder: "Example.Show.S01E02.1080p.WEB-DL.x264"
   }
 };
 
 function t(key) {
   return UI_TEXT[uiLang]?.[key] ?? UI_TEXT.ar[key] ?? key;
+}
+
+function subtitleSortOptionLabel(value) {
+  const map = {
+    best: "sortBest",
+    downloads: "sortDownloads",
+    trusted: "sortTrusted",
+    newest: "sortNewest",
+    alphabetical: "sortAlpha"
+  };
+  const k = map[value];
+  return k ? t(k) : String(value || "");
+}
+
+function reasonLabel(key) {
+  const map = {
+    exactEpisodeMatch: "reasonExactEpisodeMatch",
+    seasonPackMatch: "reasonSeasonPackMatch",
+    seasonGenericMatch: "reasonSeasonGenericMatch",
+    exactLanguageMatch: "reasonExactLanguageMatch",
+    trustedProvider: "reasonTrustedProvider",
+    highDownloads: "reasonHighDownloads",
+    strongFilenameMatch: "reasonStrongFilenameMatch",
+    completeMetadata: "reasonCompleteMetadata"
+  };
+  const uiKey = map[key];
+  return uiKey ? t(uiKey) : key;
 }
 
 function getSystemTheme() {
@@ -475,10 +790,18 @@ function applyLanguage(lang) {
   if (navHome) navHome.textContent = t("navHome");
   if (navSearch) navSearch.textContent = t("navSearch");
   if (navHealth) navHealth.textContent = t("navHealth");
+  if (globalSearchForm) globalSearchForm.setAttribute("aria-label", t("globalSearchAriaLabel"));
+  document.querySelector(".nav-links")?.setAttribute("aria-label", t("mainNavAriaLabel"));
+  langSwitcherEl?.setAttribute("aria-label", t("langSwitcherAriaLabel"));
+  const brandTag = document.getElementById("brandTagline");
+  if (brandTag) brandTag.textContent = t("brandTagline");
+  const siteBrand = document.getElementById("siteBrand");
+  if (siteBrand) siteBrand.setAttribute("aria-label", t("brandAriaLabel"));
   if (themeToggleBtn) themeToggleBtn.textContent = uiTheme === "dark" ? t("themeLight") : t("themeDark");
   langSwitcherEl?.querySelectorAll("[data-lang]").forEach((btn) => {
     btn.classList.toggle("is-active", btn.getAttribute("data-lang") === uiLang);
   });
+  updateDocumentMeta(parseLocation());
 }
 
 function initAppearance() {
@@ -511,9 +834,9 @@ function initAppearance() {
 
 function getTvQuickFilterKinds() {
   return [
-    { kind: "exactEpisode", label: uiLang === "ar" ? "مطابقة الحلقة" : "Exact episode" },
-    { kind: "seasonPack", label: uiLang === "ar" ? "باك الموسم" : "Season pack" },
-    { kind: "seasonScoped", label: uiLang === "ar" ? "ترجمة عامة للموسم" : "Season-scoped" }
+    { kind: "exactEpisode", label: t("subMatchTypeExact") },
+    { kind: "seasonPack", label: t("subMatchTypePack") },
+    { kind: "seasonScoped", label: t("subMatchTypeScoped") }
   ];
 }
 
@@ -553,6 +876,19 @@ function escapeHtml(s = "") {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
+}
+
+function pageStateLoading(message) {
+  return `<div class="page-state page-state--loading" role="status" aria-live="polite"><span class="page-state__spinner" aria-hidden="true"></span><p class="page-state__message">${escapeHtml(message)}</p></div>`;
+}
+
+function pageStateError(title, body, actionsHtml = "") {
+  return `<section class="page-state page-state--error" role="alert">
+    <span class="page-state__icon" aria-hidden="true">!</span>
+    <h2 class="page-state__title">${escapeHtml(title)}</h2>
+    <p class="page-state__body">${escapeHtml(body)}</p>
+    ${actionsHtml ? `<div class="page-state__actions row-actions">${actionsHtml}</div>` : ""}
+  </section>`;
 }
 
 function isSubtitleDevDiagnosticsEnabled() {
@@ -713,7 +1049,8 @@ function buildSubtitleDiagnosticsSummaryText(snapshot) {
     filtered,
     visibleLength,
     formControls,
-    providerErrors
+    providerErrors,
+    providerHealth
   } = snapshot;
   const lines = [];
   lines.push("Subtitle Hub · diagnostics summary");
@@ -747,6 +1084,14 @@ function buildSubtitleDiagnosticsSummaryText(snapshot) {
   }
   const pe = Array.isArray(providerErrors) ? providerErrors : [];
   if (pe.length) lines.push(`- provider error count: ${pe.length} (messages omitted)`);
+  if (providerHealth?.tier) {
+    lines.push("");
+    lines.push("## Provider health (product tier)");
+    lines.push(`- tier: ${providerHealth.tier}`);
+    lines.push(`- failedProviders: ${(providerHealth.failedProviders || []).join(", ") || "—"}`);
+    lines.push(`- providersWithData: ${(providerHealth.providersWithData || []).join(", ") || "—"}`);
+    lines.push(`- fallbackAssisted: ${Boolean(providerHealth.fallbackAssisted)}`);
+  }
 
   const subdlTr = pipelineDiagnostics?.subdlTrace;
   if (subdlTr?.attempts?.length > 0) {
@@ -1237,6 +1582,16 @@ function parseLocation() {
   return { page: "404" };
 }
 
+function metaOptionsForRoute(route) {
+  const m = state.selectedMedia;
+  if (!route || route.page === "404") return {};
+  if (!m) return {};
+  if (String(m.tmdbId) !== String(route.tmdbId || "") || m.mediaType !== route.mediaType) return {};
+  const title = String(m.title || "").trim();
+  if (!title) return {};
+  return { mediaTitle: title };
+}
+
 function toSearchUrl(search) {
   const params = new URLSearchParams();
   if (search.query) params.set("query", search.query);
@@ -1279,6 +1634,106 @@ async function apiFetch(path) {
   return data;
 }
 
+function showAppToast(message, variant = "error") {
+  let host = document.getElementById("appToast");
+  if (!host) {
+    host = document.createElement("div");
+    host.id = "appToast";
+    host.className = "app-toast";
+    host.setAttribute("aria-live", "polite");
+    document.body.appendChild(host);
+  }
+  host.innerHTML = `<div class="alert alert-${escapeHtml(variant)} app-toast__msg">${escapeHtml(message)}</div>`;
+  host.hidden = false;
+  clearTimeout(showAppToast._timer);
+  showAppToast._timer = setTimeout(() => {
+    host.innerHTML = "";
+    host.hidden = true;
+  }, 8000);
+}
+
+async function runOpensubtitlesDownloadClick(trigger) {
+  const fileId = String(trigger.getAttribute("data-opensubtitles-file-id") || "").trim();
+  const labelEl = trigger.querySelector(".btn-download-primary__label") || trigger;
+  const prevLabel = labelEl.textContent;
+  if (!fileId) {
+    showAppToast(`${t("openSubtitlesNoFileId")} ${t("openSubtitlesUnavailableHint")}`);
+    trackProductEvent(AnalyticsEvent.SUBTITLE_DOWNLOAD_RESOLVED, {
+      ok: false,
+      reason: "missing_file_id",
+      provider: "opensubtitles",
+      actionKind: "opensubtitles_resolve"
+    });
+    return;
+  }
+  labelEl.textContent = t("openSubtitlesResolving");
+  trigger.disabled = true;
+  try {
+    const res = await fetch("/.netlify/functions/opensubtitles-resolve-download", {
+      method: "POST",
+      headers: { Accept: "application/json", "Content-Type": "application/json" },
+      body: JSON.stringify({ fileId })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (data.ok && data.downloadUrl) {
+      const fromBest = trigger.hasAttribute("data-best-pick");
+      trackProductEvent(AnalyticsEvent.SUBTITLE_DOWNLOAD_CLICKED, {
+        provider: "opensubtitles",
+        fromBestPick: fromBest,
+        via: "opensubtitles_lazy_resolve",
+        sourceArea: "subtitles",
+        actionKind: "lazy_resolve_then_open"
+      });
+      if (fromBest) {
+        trackProductEvent(AnalyticsEvent.SUBTITLE_BEST_PICK_DOWNLOAD_CLICKED, {
+          ...contextFromRoute(parseLocation()),
+          provider: "opensubtitles",
+          sourceArea: "subtitles",
+          actionKind: "best_pick_download"
+        });
+      }
+      trackProductEvent(AnalyticsEvent.SUBTITLE_DOWNLOAD_RESOLVED, {
+        ok: true,
+        provider: "opensubtitles",
+        opensubtitlesLinkKind: data.opensubtitlesLinkKind,
+        opensubtitlesResolveOnClickUsed: Boolean(data.opensubtitlesResolveOnClickUsed),
+        opensubtitlesResolveUsedFallback: Boolean(data.opensubtitlesResolveUsedFallback),
+        actionKind: "opensubtitles_resolve"
+      });
+      window.open(data.downloadUrl, "_blank", "noopener,noreferrer");
+      return;
+    }
+    const failCode = String(data.code || "");
+    trackProductEvent(AnalyticsEvent.SUBTITLE_DOWNLOAD_RESOLVED, {
+      ok: false,
+      provider: "opensubtitles",
+      opensubtitlesLinkKind: data.opensubtitlesLinkKind,
+      resolveFailureCode: failCode,
+      opensubtitlesResolveFailureReason: String(data.opensubtitlesResolveFailureReason || data.code || "").slice(
+        0,
+        200
+      ),
+      actionKind: "opensubtitles_resolve"
+    });
+    if (failCode === "quota_exhausted" || failCode === "rate_limited") {
+      showAppToast(t("openSubtitlesQuotaReached"), "error");
+    } else {
+      showAppToast(`${t("openSubtitlesUnavailable")} ${t("openSubtitlesUnavailableHint")}`, "error");
+    }
+  } catch {
+    showAppToast(`${t("openSubtitlesUnavailable")} ${t("openSubtitlesUnavailableHint")}`, "error");
+    trackProductEvent(AnalyticsEvent.SUBTITLE_DOWNLOAD_RESOLVED, {
+      ok: false,
+      provider: "opensubtitles",
+      reason: "network_error",
+      actionKind: "opensubtitles_resolve"
+    });
+  } finally {
+    trigger.disabled = false;
+    labelEl.textContent = prevLabel || t("downloadSubtitle");
+  }
+}
+
 async function fetchHealth() {
   return apiFetch("/.netlify/functions/health");
 }
@@ -1294,33 +1749,85 @@ function setMetaTag(selector, attr, value) {
   el.setAttribute(attr, value);
 }
 
+function ensureMetaName(name, content) {
+  if (content == null || content === "") return;
+  let el = document.querySelector(`meta[name="${name}"]`);
+  if (!el) {
+    el = document.createElement("meta");
+    el.setAttribute("name", name);
+    document.head.appendChild(el);
+  }
+  el.setAttribute("content", content);
+}
+
+function ensureMetaProperty(property, content) {
+  if (content == null || content === "") return;
+  let el = document.querySelector(`meta[property="${property}"]`);
+  if (!el) {
+    el = document.createElement("meta");
+    el.setAttribute("property", property);
+    document.head.appendChild(el);
+  }
+  el.setAttribute("content", content);
+}
+
 function updateDocumentMeta(route) {
   const baseTitle = "Subtitle Hub";
   let title = baseTitle;
-  let desc = uiLang === "ar" ? "اكتشف الترجمات بسرعة بتجربة حديثة ومرتبة." : "Discover subtitles fast with a modern curated experience.";
-  let canonicalPath = location.pathname + location.search;
-  if (route.page === "home") {
-    title = uiLang === "ar" ? "Subtitle Hub | اكتشف ترجمات الأفلام والمسلسلات" : "Subtitle Hub | Discover movie and TV subtitles";
+  let desc = t("metaDescriptionDefault");
+  let canonicalPath = `${location.pathname}${location.search || ""}`;
+
+  if (route.page === "404") {
+    title = `${t("pageNotFound")} | ${baseTitle}`;
+    desc = t("pageNotFoundDesc");
+    canonicalPath = location.pathname;
+  } else if (route.page === "home") {
+    title = t("metaTitleHome");
   } else if (route.page === "search") {
-    title = uiLang === "ar" ? "Subtitle Hub | بحث العناوين" : "Subtitle Hub | Search titles";
+    title = t("metaTitleSearch");
     if (route.query) {
       title = `${route.query} | ${baseTitle}`;
-      desc =
-        uiLang === "ar"
-          ? `نتائج بحث مرتبة لعنوان ${route.query} مع وصول سريع للترجمات.`
-          : `Ranked search results for ${route.query} with fast subtitle access.`;
+      desc = `${t("metaSearchDescPrefix")}${route.query}${t("metaSearchDescSuffix")}`;
     }
   } else if (route.page === "media") {
-    title = uiLang === "ar" ? `تفاصيل العمل | ${baseTitle}` : `Title details | ${baseTitle}`;
     canonicalPath = location.pathname;
+    const mediaTitle = metaOptionsForRoute(route).mediaTitle;
+    if (mediaTitle) {
+      title = t("metaTitleMediaNamed").replaceAll("{title}", mediaTitle);
+      desc = t("metaDescMediaNamed").replaceAll("{title}", mediaTitle);
+    } else {
+      title = t("metaTitleMedia");
+      desc = t("metaDescMediaPageGeneric");
+    }
   } else if (route.page === "subtitles") {
-    title = uiLang === "ar" ? `نتائج الترجمة | ${baseTitle}` : `Subtitle results | ${baseTitle}`;
+    const mediaTitle = metaOptionsForRoute(route).mediaTitle;
+    if (mediaTitle) {
+      title = t("metaTitleSubtitlesNamed").replaceAll("{title}", mediaTitle);
+      desc = t("metaDescSubtitlesNamed").replaceAll("{title}", mediaTitle);
+    } else {
+      title = t("metaTitleSubtitles");
+      desc = t("metaDescSubtitlesPageGeneric");
+    }
   }
+
   document.title = title;
   setMetaTag('meta[name="description"]', "content", desc);
-  setMetaTag('meta[property="og:title"]', "content", title);
-  setMetaTag('meta[property="og:description"]', "content", desc);
+  ensureMetaProperty("og:title", title);
+  ensureMetaProperty("og:description", desc);
+  ensureMetaProperty("og:site_name", "Subtitle Hub");
+  ensureMetaProperty("og:type", "website");
+  ensureMetaProperty("og:locale", uiLang === "ar" ? "ar_AR" : "en_US");
   const canonicalHref = `${location.origin}${canonicalPath}`;
+  ensureMetaProperty("og:url", canonicalHref);
+  const ogImage = `${location.origin}/og-image.png`;
+  ensureMetaProperty("og:image", ogImage);
+  ensureMetaProperty("og:image:width", "1200");
+  ensureMetaProperty("og:image:height", "630");
+  ensureMetaProperty("og:image:alt", t("metaOgImageAlt"));
+  ensureMetaName("twitter:card", "summary_large_image");
+  ensureMetaName("twitter:title", title);
+  ensureMetaName("twitter:description", desc);
+  ensureMetaName("twitter:image", ogImage);
   let canonicalEl = document.querySelector('link[rel="canonical"]');
   if (!canonicalEl) {
     canonicalEl = document.createElement("link");
@@ -1361,6 +1868,161 @@ async function fetchSubtitles({ tmdbId, mediaType, language, provider, season, e
     params.set("diagnostics", "1");
   }
   return apiFetchCached(`/.netlify/functions/subtitles?${params.toString()}`, 60 * 1000);
+}
+
+function normalizeProviderHealth(ph) {
+  if (!ph || typeof ph !== "object") return null;
+  const failureKinds =
+    ph.failureKinds && typeof ph.failureKinds === "object" ? { ...ph.failureKinds } : {};
+  const anyRateLimited =
+    Boolean(ph.anyRateLimited) || Object.values(failureKinds).some((k) => k === "limit");
+  return {
+    tier: String(ph.tier || "full"),
+    requestedProviders: Array.isArray(ph.requestedProviders) ? ph.requestedProviders : [],
+    failedProviders: Array.isArray(ph.failedProviders) ? ph.failedProviders : [],
+    succeededProviders: Array.isArray(ph.succeededProviders) ? ph.succeededProviders : [],
+    providersWithData: Array.isArray(ph.providersWithData) ? ph.providersWithData : [],
+    failureKinds,
+    anyRateLimited,
+    fallbackAssisted: Boolean(ph.fallbackAssisted),
+    alternateRouteOffered: Boolean(ph.alternateRouteOffered)
+  };
+}
+
+function deriveProviderHealthClientSide(data) {
+  const prov = String(data.provider || "all").trim().toLowerCase();
+  const requested = prov === "all" ? ["subdl", "opensubtitles"] : [prov];
+  const errors = Array.isArray(data.providerErrors) ? data.providerErrors : [];
+  const failedSet = new Set();
+  const failureKinds = {};
+  for (const e of errors) {
+    const id = String(e.provider || "").toLowerCase();
+    if (!id) continue;
+    failedSet.add(id);
+    if (!failureKinds[id]) {
+      const m = String(e.message || "").toLowerCase();
+      failureKinds[id] =
+        /\b429\b/.test(m) || m.includes("rate limit") || m.includes("quota") || m.includes("too many requests")
+          ? "limit"
+          : "generic";
+    }
+  }
+  const failed = [...failedSet];
+  const succeeded = requested.filter((p) => !failedSet.has(p));
+  const subs = data.subtitles || [];
+  const inResults = new Set();
+  for (const s of subs) {
+    const p = String(s.provider || "").toLowerCase();
+    if (p) inResults.add(p);
+  }
+  const providersWithData = [...inResults];
+  const anyRateLimited = Object.values(failureKinds).some((k) => k === "limit");
+  const dx = data.diagnostics;
+  const fallbackAssisted = Boolean(dx?.subdlTrace?.htmlFallbackUsed || dx?.subdlTrace?.episodeHtmlFallbackUsed);
+  const alternateRouteOffered = Array.isArray(data.alternateSubtitles) && data.alternateSubtitles.length > 0;
+  const wantBoth = requested.length >= 2;
+  let tier = "full";
+  if (prov !== "all") {
+    if (failed.length >= requested.length) tier = "unavailable";
+    else if (succeeded.length) tier = "focused";
+    else tier = "unavailable";
+  } else if (wantBoth) {
+    if (failed.length === 0) {
+      if (!subs.length) tier = "no_matches_upstream";
+      else if (providersWithData.length >= 2) tier = subs.length <= 4 ? "sparse" : "full";
+      else tier = "partial_catalog";
+    } else if (failed.length === 1) {
+      tier = subs.length ? "partial_outage" : "partial_outage_empty";
+    } else tier = "unavailable";
+  } else if (!succeeded.length) tier = "unavailable";
+  else if (!subs.length) tier = "no_matches_upstream";
+
+  return normalizeProviderHealth({
+    tier,
+    requestedProviders: requested,
+    failedProviders: failed,
+    succeededProviders: succeeded,
+    providersWithData,
+    failureKinds,
+    anyRateLimited,
+    fallbackAssisted,
+    alternateRouteOffered
+  });
+}
+
+
+function mergeProviderHealthFromApi(data) {
+  return normalizeProviderHealth(data.providerHealth) || deriveProviderHealthClientSide(data);
+}
+
+function buildProviderHealthStatusHtml(health) {
+  if (!health) return "";
+  const { tier } = health;
+  if ((tier === "full" || tier === "focused") && !health.fallbackAssisted) return "";
+
+  let mainKey = null;
+  if (tier === "partial_outage" || tier === "partial_outage_empty") {
+    mainKey = health.anyRateLimited ? "providerHealthBannerPartialOutageLimited" : "providerHealthBannerPartialOutage";
+  } else if (tier === "partial_catalog") {
+    mainKey = "providerHealthBannerPartialCatalog";
+  } else if (tier === "sparse") {
+    mainKey = "providerHealthBannerSparse";
+  } else if (tier === "no_matches_upstream") {
+    mainKey = "providerHealthBannerNoMatches";
+  }
+
+  const subKey = health.fallbackAssisted ? "providerHealthBannerFallback" : null;
+
+  if (!mainKey && !subKey) return "";
+
+  return `<div class="provider-health-banner alert alert-info" role="status">
+    ${mainKey ? `<p class="provider-health-banner__line">${escapeHtml(t(mainKey))}</p>` : ""}
+    ${
+      subKey
+        ? `<p class="provider-health-banner__line provider-health-banner__line--sub hint">${escapeHtml(t(subKey))}</p>`
+        : ""
+    }
+  </div>`;
+}
+
+function buildProviderHealthInsightPillsHtml(health) {
+  if (!health) return "";
+  const pills = [];
+  const tier = health.tier;
+  if (tier === "partial_outage" || tier === "partial_outage_empty") {
+    const ok = health.providersWithData || [];
+    if (ok.length === 1) {
+      if (ok[0] === "opensubtitles") pills.push(t("providerHealthPillShowingOpenSub"));
+      else if (ok[0] === "subdl") pills.push(t("providerHealthPillShowingSubdl"));
+    }
+  }
+  if (tier === "sparse") pills.push(t("providerHealthPillNarrowResults"));
+  return pills.map((p) => `<span class="pill pill--subtle">${escapeHtml(p)}</span>`).join("");
+}
+
+function shouldShowBestPickHealthFootnote(health) {
+  if (!health) return false;
+  const tier = health.tier;
+  return (
+    Boolean(health.fallbackAssisted) ||
+    tier === "partial_outage" ||
+    tier === "partial_catalog" ||
+    tier === "sparse" ||
+    tier === "no_matches_upstream"
+  );
+}
+
+function shouldShowEmptyStateHealthAside(health, ctx) {
+  if (!health || ctx.filtersEmptyOnly) return false;
+  const tier = health.tier;
+  return tier === "partial_outage_empty" || tier === "no_matches_upstream" || tier === "partial_catalog";
+}
+
+function getProviderHealthEmptyAside(health) {
+  if (!health) return "";
+  if (health.anyRateLimited) return t("providerHealthEmptyAsideLimited");
+  if (health.tier === "partial_outage_empty") return t("providerHealthEmptyAsideOneSourceDown");
+  return t("providerHealthEmptyAsideNarrow");
 }
 
 async function fetchMediaDetails(tmdbId, mediaType) {
@@ -1531,8 +2193,8 @@ function continueEntryHref(entry) {
 
 function continueTvMetaLine(entry) {
   if (entry.kind !== "subtitles" || entry.mediaType !== "tv") return "";
-  const s = entry.season ? (uiLang === "ar" ? `م${entry.season}` : `S${entry.season}`) : "";
-  const ep = entry.episode ? (uiLang === "ar" ? `ح${entry.episode}` : `E${entry.episode}`) : "";
+  const s = entry.season ? `${t("continueSeasonPrefix")}${entry.season}` : "";
+  const ep = entry.episode ? `${t("continueEpisodePrefix")}${entry.episode}` : "";
   if (s && ep) return `${s} · ${ep}`;
   return s || ep || "";
 }
@@ -1626,49 +2288,6 @@ function saveSubtitlePreferences(next = {}) {
   localStorage.setItem(SUBTITLE_PREFS_KEY, JSON.stringify(merged));
 }
 
-const analyticsAdapters = [];
-
-function registerAnalyticsAdapter(adapter) {
-  if (typeof adapter === "function") analyticsAdapters.push(adapter);
-}
-
-registerAnalyticsAdapter((event) => {
-  if (typeof window.gtag === "function") {
-    window.gtag("event", event.event, {
-      event_category: "subtitlehub",
-      ...event
-    });
-  }
-});
-
-registerAnalyticsAdapter((event) => {
-  if (typeof window.plausible === "function") {
-    window.plausible(event.event, { props: event });
-  }
-});
-
-registerAnalyticsAdapter((event) => {
-  if (window.posthog && typeof window.posthog.capture === "function") {
-    window.posthog.capture(event.event, event);
-  }
-});
-
-function trackEvent(name, payload = {}) {
-  const event = {
-    event: name,
-    ts: new Date().toISOString(),
-    ...payload
-  };
-  for (const adapter of analyticsAdapters) {
-    try {
-      adapter(event);
-    } catch {}
-  }
-  if (Array.isArray(window.dataLayer)) window.dataLayer.push(event);
-  window.dispatchEvent(new CustomEvent("subtitlehub:track", { detail: event }));
-  console.info("[analytics]", event);
-}
-
 async function apiFetchCached(path, ttlMs = 60000) {
   const key = String(path || "").trim();
   const cached = state.requestCache.get(key);
@@ -1715,16 +2334,6 @@ function setupSearchAutocomplete({
   wrapper.hidden = true;
   wrapper.setAttribute("role", "listbox");
   containerEl.appendChild(wrapper);
-  if (debugLabel) {
-    console.debug("[autocomplete-attach]", {
-      debugLabel,
-      hasInput: Boolean(inputEl),
-      hasContainer: Boolean(containerEl),
-      containerClass: containerEl.className || "",
-      inputId: input.id || ""
-    });
-  }
-
   let suggestions = [];
   let activeIndex = -1;
   let requestSeq = 0;
@@ -1741,11 +2350,8 @@ function setupSearchAutocomplete({
   const render = (query) => {
     if (!suggestions.length) {
       wrapper.hidden = false;
-      wrapper.innerHTML = `<div class="typeahead-empty">لا توجد اقتراحات</div>`;
+      wrapper.innerHTML = `<div class="typeahead-empty">${escapeHtml(t("typeaheadEmpty"))}</div>`;
       input.setAttribute("aria-expanded", "true");
-      if (debugLabel) {
-        console.debug("[autocomplete-render]", { debugLabel, query, suggestionCount: 0, emptyState: true });
-      }
       return;
     }
     wrapper.hidden = false;
@@ -1771,23 +2377,18 @@ function setupSearchAutocomplete({
         `;
       })
       .join("");
-    if (debugLabel) {
-      console.debug("[autocomplete-render]", {
-        debugLabel,
-        query,
-        suggestionCount: suggestions.length,
-        dropdownVisible: !wrapper.hidden
-      });
-    }
   };
 
   const pick = (index) => {
     const item = suggestions[index];
     if (!item) return;
     close();
-    trackEvent("suggestion_selected", {
+    trackProductEvent(AnalyticsEvent.SEARCH_SUGGESTION_SELECTED, {
+      ...contextFromRoute(parseLocation()),
       tmdbId: item.tmdbId,
-      mediaType: item.mediaType
+      mediaType: item.mediaType,
+      actionKind: "typeahead_pick",
+      autocompleteSurface: debugLabel || "unknown"
     });
     onSelect(item);
   };
@@ -1801,20 +2402,13 @@ function setupSearchAutocomplete({
     }
     const seq = ++requestSeq;
     wrapper.hidden = false;
-    wrapper.innerHTML = `<div class="typeahead-loading">جارٍ جلب الاقتراحات...</div>`;
+    wrapper.innerHTML = `<div class="typeahead-loading">${escapeHtml(t("typeaheadLoading"))}</div>`;
     input.setAttribute("aria-expanded", "true");
     try {
       const data = await fetchSuggestions(query, getType(), getYear(), 8);
       if (seq < latestAppliedSeq) return;
       latestAppliedSeq = seq;
       suggestions = data.items || [];
-      if (debugLabel) {
-        console.debug("[autocomplete-fetch]", {
-          debugLabel,
-          query,
-          suggestionCount: suggestions.length
-        });
-      }
       activeIndex = suggestions.length ? 0 : -1;
       render(query);
     } catch (err) {
@@ -1907,7 +2501,12 @@ function bindGlobalSearch(route) {
     e.preventDefault();
     const query = globalSearchInput.value.trim();
     if (!query) return;
-    trackEvent("search_submitted", { source: "global", queryLength: query.length });
+    trackProductEvent(AnalyticsEvent.SEARCH_SUBMITTED, {
+      ...contextFromRoute(parseLocation()),
+      searchSource: "global_nav",
+      queryLength: query.length,
+      actionKind: "submit_search"
+    });
     addRecentSearch({ query, type: "multi", year: "" });
     navigate(toSearchUrl({ query, type: "multi", year: "" }));
   };
@@ -1940,9 +2539,11 @@ function renderHomeFeedCard(item) {
   const arabicBadge = item?.subtitleCoverage?.arabic
     ? `<span class="pill pill--arabic">${escapeHtml(t("homeBadgeArabic"))}</span>`
     : "";
-  const englishBadge = item?.subtitleCoverage?.any ? `<span class="pill pill--subtle">EN</span>` : "";
+  const englishBadge = item?.subtitleCoverage?.any
+    ? `<span class="pill pill--subtle">${escapeHtml(t("homeBadgeEnglishShort"))}</span>`
+    : "";
   const isNew = Number(item?.year || 0) >= new Date().getFullYear() - 1;
-  const newBadge = isNew ? `<span class="pill pill--subtle">${escapeHtml(uiLang === "ar" ? "جديد" : "New")}</span>` : "";
+  const newBadge = isNew ? `<span class="pill pill--subtle">${escapeHtml(t("newBadge"))}</span>` : "";
   const trustedBadge =
     Number(item?.voteAverage || 0) >= 7.5 ? `<span class="pill pill--subtle">${escapeHtml(t("trusted"))}</span>` : "";
   return `
@@ -2104,8 +2705,8 @@ function renderHome() {
     try {
       const h = await fetchHealth();
       el.textContent = h.ready ? t("healthStatusGood") : t("healthStatusLimited");
-    } catch (err) {
-      el.textContent = `${t("healthFailed")}: ${err.message}`;
+    } catch {
+      el.textContent = `${t("healthFailed")}. ${t("errorTryAgainShort")}`;
     }
   });
   document.getElementById("homeHeroSearchForm")?.addEventListener("submit", (e) => {
@@ -2113,21 +2714,26 @@ function renderHome() {
     const q = String(document.getElementById("homeHeroSearchInput")?.value || "").trim();
     if (q) {
       addRecentSearch({ query: q, type: "multi", year: "" });
-      trackEvent("search_submitted", { source: "home_hero", queryLength: q.length });
+      trackProductEvent(AnalyticsEvent.SEARCH_SUBMITTED, {
+        ...contextFromRoute(parseLocation()),
+        searchSource: "home_hero",
+        queryLength: q.length,
+        actionKind: "submit_search"
+      });
     }
     navigate(q ? `/search?query=${encodeURIComponent(q)}` : "/search");
   });
   document.querySelector(".continue-browsing-rail")?.addEventListener("click", (e) => {
     const link = e.target.closest("[data-continue-item]");
     if (!link) return;
-    trackEvent("continue_browsing_clicked", { kind: link.getAttribute("data-continue-kind") || "" });
+    trackProductEvent(AnalyticsEvent.CONTINUE_BROWSING_CLICKED, {
+      ...contextFromRoute(parseLocation()),
+      continueKind: link.getAttribute("data-continue-kind") || "",
+      actionKind: "continue_rail"
+    });
   });
   const homeHeroForm = document.getElementById("homeHeroSearchForm");
   const homeHeroInput = document.getElementById("homeHeroSearchInput");
-  console.debug("[home-hero-autocomplete-init]", {
-    hasForm: Boolean(homeHeroForm),
-    hasInput: Boolean(homeHeroInput)
-  });
   state.homeAutocompleteCleanup = setupSearchAutocomplete({
     containerEl: homeHeroForm,
     inputEl: homeHeroInput,
@@ -2143,16 +2749,18 @@ function renderHome() {
       document.getElementById("homeFeedRoot")?.addEventListener("click", (e) => {
         const card = e.target.closest("[data-home-card]");
         if (!card) return;
-        trackEvent("home_card_clicked", {
+        trackProductEvent(AnalyticsEvent.HOME_CARD_CLICKED, {
+          ...contextFromRoute(parseLocation()),
           tmdbId: card.getAttribute("data-tmdb-id") || "",
-          mediaType: card.getAttribute("data-media-type") || ""
+          mediaType: card.getAttribute("data-media-type") || "",
+          actionKind: "discovery_card"
         });
       });
     })
-    .catch((err) => {
+    .catch(() => {
       const root = document.getElementById("homeFeedRoot");
       if (!root) return;
-      root.innerHTML = `<div class="alert alert-error">${escapeHtml(t("homeFeedFailed"))}: ${escapeHtml(err?.message || "")}</div>`;
+      root.innerHTML = pageStateError(t("homeFeedFailed"), t("errorTryAgainShort"));
     });
 }
 
@@ -2172,12 +2780,12 @@ function renderSearchShell({ query = "", type = "multi", year = "" }) {
         <div class="card-inner">
           <div class="card-title-row">
             <h2 class="title-h2">${escapeHtml(t("searchFiltersTitle"))}</h2>
-            <span class="title-meta">${escapeHtml(uiLang === "ar" ? "فلاتر ذكية" : "Smart filters")}</span>
+            <span class="title-meta">${escapeHtml(t("searchFiltersMeta"))}</span>
           </div>
           <form id="searchForm" class="form-grid">
             <div class="field">
               <label for="query">${escapeHtml(t("searchLabelQuery"))}</label>
-              <input id="query" name="query" value="${escapeHtml(query)}" placeholder="${escapeHtml(uiLang === "ar" ? "مثال: Interstellar" : "Example: Interstellar")}" required />
+              <input id="query" name="query" value="${escapeHtml(query)}" placeholder="${escapeHtml(t("searchQueryExamplePlaceholder"))}" required />
             </div>
             <div class="form-grid two-col">
               <div class="field">
@@ -2190,11 +2798,11 @@ function renderSearchShell({ query = "", type = "multi", year = "" }) {
               </div>
               <div class="field">
                 <label for="year">${escapeHtml(t("searchLabelYear"))}</label>
-                <input id="year" name="year" value="${escapeHtml(year)}" placeholder="2014" inputmode="numeric" />
+                <input id="year" name="year" value="${escapeHtml(year)}" placeholder="${escapeHtml(t("searchYearExamplePlaceholder"))}" inputmode="numeric" />
               </div>
             </div>
             <div class="row-actions">
-              <button type="submit">بحث</button>
+              <button type="submit">${escapeHtml(t("searchBtn"))}</button>
               <a class="btn secondary" href="/search" data-link>${escapeHtml(t("clear"))}</a>
             </div>
           </form>
@@ -2322,7 +2930,6 @@ function renderMediaCards(results = [], visibleCount = 24, query = "") {
           <div class="meta">
             <span class="pill">${item.mediaType === "movie" ? escapeHtml(t("searchTypeMovie")) : escapeHtml(t("searchTypeTv"))}</span>
             <span><strong>${escapeHtml(item.year || "—")}</strong></span>
-            <span>#${escapeHtml(item.tmdbId)}</span>
           </div>
           <div class="card-cta"><span class="btn btn-sm">${escapeHtml(t("viewSubtitles"))}</span></div>
         </div>
@@ -2331,11 +2938,6 @@ function renderMediaCards(results = [], visibleCount = 24, query = "") {
   `
     )
     .join("");
-  // TEMP DEBUG: verify rendered counts after dedupe/grouping.
-  console.debug("[search-render-counts]", {
-    renderedVisible: visible.length,
-    renderedUniqueTotal: visible.length
-  });
   if (results.length > visible.length) {
     list.insertAdjacentHTML(
       "beforeend",
@@ -2387,11 +2989,13 @@ async function renderSearch(route) {
       year: form.year.value.trim()
     };
     addRecentSearch(payload);
-    trackEvent("search_submitted", {
-      source: "search_page",
+    trackProductEvent(AnalyticsEvent.SEARCH_SUBMITTED, {
+      ...contextFromRoute(parseLocation()),
+      searchSource: "search_page",
       queryLength: payload.query.length,
-      type: payload.type,
-      hasYear: Boolean(payload.year)
+      searchType: payload.type,
+      hasYear: Boolean(payload.year),
+      actionKind: "submit_search"
     });
     navigate(toSearchUrl(payload));
   });
@@ -2399,7 +3003,12 @@ async function renderSearch(route) {
     b.addEventListener("click", () => {
       try {
         const parsed = JSON.parse(b.getAttribute("data-recent"));
-        trackEvent("recent_search_clicked", { source: "search_page", type: parsed?.type || "multi" });
+        trackProductEvent(AnalyticsEvent.RECENT_SEARCH_CLICKED, {
+          ...contextFromRoute(parseLocation()),
+          searchSource: "search_page",
+          searchType: parsed?.type || "multi",
+          actionKind: "recent_chip"
+        });
         navigate(toSearchUrl(parsed));
       } catch {}
     });
@@ -2408,7 +3017,7 @@ async function renderSearch(route) {
     renderMediaCards([]);
     return;
   }
-  status.innerHTML = `<div class="alert alert-info">${escapeHtml(t("searching"))}</div>`;
+  status.innerHTML = pageStateLoading(t("searching"));
   document.getElementById("searchResults").innerHTML = `<div class="skeleton-grid">${Array.from({ length: 6 })
     .map(() => `<div class="skeleton-card skeleton-card--media"></div>`)
     .join("")}</div>`;
@@ -2418,18 +3027,13 @@ async function renderSearch(route) {
     status.innerHTML = "";
     const rawResults = data.results || [];
     const allResults = dedupeSearchResults(rawResults);
-    // TEMP DEBUG: verify pre-render dedupe effectiveness.
-    console.debug("[search-dedupe-counts]", {
-      rawResults: rawResults.length,
-      dedupedResults: allResults.length,
-      dedupePrimaryKey: "mediaType:tmdbId",
-      dedupeFallbackKey: "mediaType|normalizedTitle|year"
-    });
     let visibleCount = 24;
-    trackEvent("search_results_viewed", {
+    trackProductEvent(AnalyticsEvent.SEARCH_RESULTS_VIEWED, {
+      ...contextFromRoute(parseLocation()),
       queryLength: query.length,
-      type,
-      dedupedCount: allResults.length
+      searchType: type,
+      resultCount: allResults.length,
+      actionKind: "search_results_paint"
     });
     const paint = () => {
       renderMediaCards(allResults, visibleCount, query);
@@ -2437,13 +3041,23 @@ async function renderSearch(route) {
       if (loadMoreBtn) {
         loadMoreBtn.addEventListener("click", () => {
           visibleCount += 24;
+          trackProductEvent(AnalyticsEvent.LOAD_MORE_CLICKED, {
+            ...contextFromRoute(parseLocation()),
+            surface: "search_results",
+            visibleAfter: visibleCount,
+            actionKind: "pagination"
+          });
           paint();
         });
       }
     };
     paint();
-  } catch (err) {
-    status.innerHTML = `<div class="alert alert-error">${escapeHtml(t("searchFailed"))}: ${escapeHtml(err.message)}</div>`;
+  } catch {
+    status.innerHTML = pageStateError(
+      t("searchFailed"),
+      t("errorTryAgainShort"),
+      `<a class="btn" href="/search" data-link>${escapeHtml(t("navSearch"))}</a>`
+    );
     document.getElementById("searchResults").innerHTML = "";
   }
 }
@@ -2512,18 +3126,12 @@ function parseReleaseMetadata(sub) {
 function buildTvAlternateSectionIntroHtml(filteredAlt, mainHasExact) {
   const hasPack = filteredAlt.some((s) => String(s.tvMatchKind || "") === "seasonPack");
   const hasScoped = filteredAlt.some((s) => String(s.tvMatchKind || "") === "seasonScoped");
-  const lead = mainHasExact
-    ? uiLang === "ar"
-      ? "يوجد أيضاً بدائل على مستوى الموسم أدناه — ليست مطابقة حلقة دقيقة."
-      : "Season-level alternatives are also available below (not exact episode matches)."
-    : uiLang === "ar"
-      ? "لم نجد ترجمة مطابقة للحلقة، لكن وجدنا بدائل من نفس الموسم."
-      : "No exact episode subtitle found, but season alternatives are available.";
+  const lead = mainHasExact ? t("tvAlternateLeadWithMain") : t("tvAlternateLeadNoExact");
   const hintParts = [];
-  if (hasPack) hintParts.push(uiLang === "ar" ? "باك الموسم قد يشمل حلقات متعددة." : "Season packs may include multiple episodes.");
-  if (hasScoped) hintParts.push(uiLang === "ar" ? "الترجمات على مستوى الموسم قد تفيد حتى من دون مطابقة الحلقة." : "Season-scoped subtitles can still be useful without exact episode matching.");
+  if (hasPack) hintParts.push(t("tvAlternateHintPack"));
+  if (hasScoped) hintParts.push(t("tvAlternateHintScoped"));
   const hint = hintParts.join(" ");
-  return `<p class="subtitle-alternate-lead">${lead}</p>${hint ? `<p class="hint subtitle-alternate-hint">${hint}</p>` : ""}`;
+  return `<p class="subtitle-alternate-lead">${escapeHtml(lead)}</p>${hint ? `<p class="hint subtitle-alternate-hint">${escapeHtml(hint)}</p>` : ""}`;
 }
 
 function applySubtitleFilters(subtitles, controls) {
@@ -2573,7 +3181,9 @@ function applySubtitleFilters(subtitles, controls) {
 
 function subtitleStableKey(s) {
   const id = s?.id ?? s?.subtitleId ?? s?.subtitle_id ?? "";
-  return `${String(s?.provider || "")}|${String(id)}|${String(s?.downloadUrl || "").slice(0, 96)}`;
+  const osFid = String(s?.opensubtitlesFileId || "").trim();
+  const url = String(s?.downloadUrl || "").slice(0, 96);
+  return `${String(s?.provider || "")}|${String(id)}|${osFid}|${url}`;
 }
 
 function subtitleRankingComparator(a, b) {
@@ -2594,32 +3204,6 @@ function providerLabel(provider) {
   return provider || "unknown";
 }
 
-function reasonLabelAr(key) {
-  const map =
-    uiLang === "ar"
-      ? {
-          exactEpisodeMatch: "مطابقة الحلقة",
-          seasonPackMatch: "باك الموسم",
-          seasonGenericMatch: "ترجمة عامة للموسم",
-          exactLanguageMatch: "تطابق اللغة",
-          trustedProvider: "مصدر موثوق",
-          highDownloads: "تنزيلات عالية",
-          strongFilenameMatch: "تطابق قوي مع اسم الملف",
-          completeMetadata: "بيانات إصدار مكتملة"
-        }
-      : {
-          exactEpisodeMatch: "Exact episode match",
-          seasonPackMatch: "Season pack match",
-          seasonGenericMatch: "Season-level match",
-          exactLanguageMatch: "Exact language match",
-          trustedProvider: "Trusted provider",
-          highDownloads: "High downloads",
-          strongFilenameMatch: "Strong filename match",
-          completeMetadata: "Complete metadata"
-        };
-  return map[key] || key;
-}
-
 /**
  * 1–3 short bullets for the best-pick card; prefers backend `topReasons`, then filename/trusted/Arabic hints.
  */
@@ -2634,33 +3218,35 @@ function buildBestPickReasonBullets(sub) {
   };
   const tr = Array.isArray(sub.topReasons) ? sub.topReasons : [];
   for (const key of tr) {
-    push(reasonLabelAr(key));
+    push(reasonLabel(key));
     if (out.length >= 3) return out;
   }
   const langNorm = normalizeSubtitleLangForFilter(sub.language);
   if (out.length < 3 && langNorm === "ar" && !tr.includes("exactLanguageMatch")) {
-    push(uiLang === "ar" ? "عربي متاح" : "Arabic subtitles available");
+    push(t("bestPickReasonArabicAvailable"));
   }
   const breakdown = sub.scoreBreakdown || {};
   if (out.length < 3 && Number(breakdown.filenameSimilarity || 0) >= 12 && !tr.includes("strongFilenameMatch")) {
-    push(reasonLabelAr("strongFilenameMatch"));
+    push(reasonLabel("strongFilenameMatch"));
   }
   const isTrusted =
     (sub.provider === "opensubtitles" && Number(sub.downloads || 0) >= 1500) ||
     (sub.provider === "subdl" && Number(sub.downloads || 0) >= 700);
   if (out.length < 3 && isTrusted && !tr.includes("trustedProvider")) {
-    push(reasonLabelAr("trustedProvider"));
+    push(reasonLabel("trustedProvider"));
+  }
+  const tvKind = String(sub.tvMatchKind || "");
+  if (out.length < 3 && tvKind === "exactEpisode" && !tr.includes("exactEpisodeMatch")) {
+    push(reasonLabel("exactEpisodeMatch"));
+  }
+  if (out.length < 3 && tvKind === "seasonPack" && !tr.includes("seasonPackMatch")) {
+    push(reasonLabel("seasonPackMatch"));
+  }
+  if (out.length < 3 && tvKind === "seasonScoped" && !tr.includes("seasonGenericMatch")) {
+    push(reasonLabel("seasonGenericMatch"));
   }
   if (!out.length) {
-    push(
-      sub.confidence === "excellent"
-        ? uiLang === "ar"
-          ? "ثقة ممتازة في ترتيب النظام"
-          : "Excellent confidence from ranking"
-        : uiLang === "ar"
-          ? "تطابق قوي ضمن النتائج الحالية"
-          : "Strong match among current results"
-    );
+    push(sub.confidence === "excellent" ? t("bestPickFallbackExcellent") : t("bestPickFallbackStrong"));
   }
   return out.slice(0, 3);
 }
@@ -2696,7 +3282,47 @@ function selectBestSubtitleRecommendation(filtered, ctx) {
   return { sub: top, reasons: buildBestPickReasonBullets(top) };
 }
 
-function renderSubtitleBestPick(container, pick) {
+function renderOpensubtitlesDownloadControl(sub, { bestPick = false } = {}) {
+  const fid = escapeHtml(String(sub.opensubtitlesFileId || "").trim());
+  const src = escapeHtml(String(sub.opensubtitlesSourcePageUrl || "").trim());
+  const view = src
+    ? `<a class="btn secondary btn-sm btn-view-source" href="${src}" target="_blank" rel="noopener noreferrer" data-analytics-view-source="1" data-provider="opensubtitles">${escapeHtml(t("viewSource"))}</a>`
+    : "";
+  if (bestPick) {
+    return `<div class="subtitle-best-pick__cta-row row-actions">
+      <button type="button" class="btn subtitle-best-pick__cta" data-download="1" data-best-pick="1" data-provider="opensubtitles" data-os-download="1" data-opensubtitles-file-id="${fid}" data-opensubtitles-source-page="${src}">${escapeHtml(t("downloadSubtitle"))}</button>
+      ${view}
+    </div>`;
+  }
+  return `<div class="sub-item__action-row">
+    <button type="button" class="btn btn-download-primary" data-download="1" data-provider="opensubtitles" data-os-download="1" data-opensubtitles-file-id="${fid}" data-opensubtitles-source-page="${src}">
+      <span class="btn-download-primary__label">${escapeHtml(t("downloadSubtitle"))}</span>
+    </button>
+    ${view}
+  </div>`;
+}
+
+function renderSubdlDownloadControl(sub, { bestPick = false } = {}) {
+  if (bestPick) {
+    return `<a class="btn subtitle-best-pick__cta" data-download="1" data-best-pick="1" data-provider="${escapeHtml(
+      sub.provider || ""
+    )}" href="${escapeHtml(sub.downloadUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(t("downloadSubtitle"))}</a>`;
+  }
+  return `<a class="btn btn-download-primary" data-download="1" data-provider="${escapeHtml(
+    sub.provider || ""
+  )}" href="${escapeHtml(sub.downloadUrl)}" target="_blank" rel="noopener noreferrer">
+    <span class="btn-download-primary__label">${escapeHtml(t("downloadSubtitle"))}</span>
+  </a>`;
+}
+
+function renderSubtitlePrimaryDownloadControl(sub, opts = {}) {
+  if (String(sub.provider || "") === "opensubtitles") {
+    return renderOpensubtitlesDownloadControl(sub, opts);
+  }
+  return renderSubdlDownloadControl(sub, opts);
+}
+
+function renderSubtitleBestPick(container, pick, providerHealth = null) {
   if (!container) return;
   if (!pick) {
     container.hidden = true;
@@ -2704,15 +3330,19 @@ function renderSubtitleBestPick(container, pick) {
     return;
   }
   const { sub, reasons } = pick;
+  const healthFoot =
+    providerHealth && shouldShowBestPickHealthFootnote(providerHealth)
+      ? `<p class="hint subtitle-best-pick__footnote subtitle-best-pick__footnote--health">${escapeHtml(t("providerHealthBestPickFootnote"))}</p>`
+      : "";
   const isTv = Boolean(sub.tvMatchKind && sub.tvMatchKind !== "movie");
   const tvKind = isTv ? String(sub.tvMatchKind || "") : "";
   const tvTierBadge =
     tvKind === "exactEpisode"
-      ? `<span class="tag-chip tag-exact">${escapeHtml(uiLang === "ar" ? "مطابقة الحلقة" : "Exact episode")}</span>`
+      ? `<span class="tag-chip tag-exact">${escapeHtml(t("subMatchTypeExact"))}</span>`
       : tvKind === "seasonPack"
-        ? `<span class="tag-chip tag-season-pack">${escapeHtml(uiLang === "ar" ? "باك الموسم" : "Season pack")}</span>`
+        ? `<span class="tag-chip tag-season-pack">${escapeHtml(t("subMatchTypePack"))}</span>`
         : tvKind === "seasonScoped"
-          ? `<span class="tag-chip tag-season-generic">${escapeHtml(uiLang === "ar" ? "ترجمة عامة للموسم" : "Season-level")}</span>`
+          ? `<span class="tag-chip tag-season-generic">${escapeHtml(t("subMatchTypeScoped"))}</span>`
           : "";
   const isTrusted =
     (sub.provider === "opensubtitles" && Number(sub.downloads || 0) >= 1500) ||
@@ -2746,34 +3376,31 @@ function renderSubtitleBestPick(container, pick) {
         <p class="hint subtitle-best-pick__uploader">${escapeHtml(t("uploader"))}: ${escapeHtml(sub.author || t("unknown"))}</p>
         <div class="sub-meta subtitle-best-pick__pills">
           <span class="pill ${providerPillClass(sub.provider)}">${escapeHtml(providerLabel(sub.provider))}</span>
-          <span class="pill">${escapeHtml(sub.language || "")}${sub.hearingImpaired ? " • HI" : ""}</span>
+          <span class="pill">${escapeHtml(sub.language || "")}${sub.hearingImpaired ? ` • ${escapeHtml(t("subtitleHiAbbr"))}` : ""}</span>
           <span class="pill ${meter.cls}">${escapeHtml(t("confidence"))}: ${escapeHtml(meter.label)}</span>
         </div>
         ${tags ? `<div class="sub-meta subtitle-best-pick__tags">${tags}</div>` : ""}
         <p class="subtitle-best-pick__why-label">${escapeHtml(t("bestPickRankSummary"))}</p>
         <ul class="subtitle-best-pick__reasons">${reasonsHtml}</ul>
-        <div class="subtitle-best-pick__actions row-actions">
-          <a class="btn subtitle-best-pick__cta" data-download="1" data-best-pick="1" data-provider="${escapeHtml(
-            sub.provider || ""
-          )}" href="${escapeHtml(sub.downloadUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(t("download"))}</a>
-        </div>
+        <div class="subtitle-best-pick__actions">${renderSubtitlePrimaryDownloadControl(sub, { bestPick: true })}</div>
         <p class="hint subtitle-best-pick__footnote">${escapeHtml(t("bestPickFootnote"))}</p>
+        ${healthFoot}
       </div>
     </section>
   `;
 }
 
 function confidenceBadgeFromBackend(confidence) {
-  if (confidence === "excellent") return { label: uiLang === "ar" ? "ممتاز" : "Excellent", cls: "confidence-high" };
-  if (confidence === "strong") return { label: uiLang === "ar" ? "قوي" : "Strong", cls: "confidence-mid" };
-  return { label: uiLang === "ar" ? "متوسط" : "Medium", cls: "confidence-low" };
+  if (confidence === "excellent") return { label: t("confidenceExcellent"), cls: "confidence-high" };
+  if (confidence === "strong") return { label: t("confidenceStrong"), cls: "confidence-mid" };
+  return { label: t("confidenceMedium"), cls: "confidence-low" };
 }
 
 function formatReadableDate(value = "") {
   if (!value) return "—";
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return value;
-  return d.toLocaleDateString("ar", { year: "numeric", month: "long", day: "numeric" });
+  return d.toLocaleDateString(uiLang === "ar" ? "ar" : "en-US", { year: "numeric", month: "long", day: "numeric" });
 }
 
 function renderSubtitleMediaHero(media, route) {
@@ -2787,16 +3414,16 @@ function renderSubtitleMediaHero(media, route) {
   const genres =
     Array.isArray(media.genres) && media.genres.length
       ? media.genres.map((g) => `<span class="tag-chip">${escapeHtml(g)}</span>`).join("")
-      : `<span class="hint">لا تتوفر تصنيفات لهذا العمل.</span>`;
+      : `<span class="hint">${escapeHtml(t("noGenresHint"))}</span>`;
   const stats =
     media.mediaType === "movie"
       ? [
-          media.runtime ? `${media.runtime} دقيقة` : "",
+          media.runtime ? `${media.runtime} ${t("statMinutesUnit")}` : "",
           media.releaseDate ? formatReadableDate(media.releaseDate) : ""
         ]
       : [
-          media.seasonCount ? `${media.seasonCount} مواسم` : "",
-          media.episodeCount ? `${media.episodeCount} حلقة` : "",
+          media.seasonCount ? `${media.seasonCount} ${t("statSeasonsUnit")}` : "",
+          media.episodeCount ? `${media.episodeCount} ${t("statEpisodesUnit")}` : "",
           media.firstAirDate ? formatReadableDate(media.firstAirDate) : ""
         ];
 
@@ -2827,7 +3454,7 @@ function renderSubtitleMediaHero(media, route) {
                 provider: route.provider,
                 season: route.season,
                 episode: route.episode
-              })}" data-link>العودة لتفاصيل العمل</a>
+              })}" data-link>${escapeHtml(t("backToDetails"))}</a>
             </div>
           </div>
         </div>
@@ -2839,13 +3466,13 @@ function renderSubtitleMediaHero(media, route) {
 function seasonOptionLabel(n) {
   const num = Number(n || 0);
   if (!Number.isFinite(num) || num < 1) return "";
-  return uiLang === "ar" ? `الموسم ${num}` : `Season ${num}`;
+  return t("subtitleSeasonOptionTemplate").replace("{n}", String(num));
 }
 
 function episodeOptionLabel(n) {
   const num = Number(n || 0);
   if (!Number.isFinite(num) || num < 1) return "";
-  return uiLang === "ar" ? `الحلقة ${num}` : `Episode ${num}`;
+  return t("subtitleEpisodeOptionTemplate").replace("{n}", String(num));
 }
 
 function getSeasonCountForUi(media, route = {}) {
@@ -2881,9 +3508,7 @@ function buildSeasonOptionsHtml(media, route = {}) {
   const seasons = Array.isArray(media?.seasons) ? media.seasons.filter((s) => Number(s?.seasonNumber || 0) > 0) : [];
   const selected = String(route?.season || "").trim();
   if (seasons.length) {
-    const head = [`<option value="" ${selected ? "" : "selected"} disabled>${escapeHtml(
-      uiLang === "ar" ? "اختر الموسم" : "Select season"
-    )}</option>`];
+    const head = [`<option value="" ${selected ? "" : "selected"} disabled>${escapeHtml(t("selectSeasonPrompt"))}</option>`];
     const body = seasons.map((s) => {
       const n = String(Number(s.seasonNumber || 0));
       return `<option value="${n}" ${selected === n ? "selected" : ""}>${escapeHtml(seasonOptionLabel(n))}</option>`;
@@ -2891,9 +3516,7 @@ function buildSeasonOptionsHtml(media, route = {}) {
     return [...head, ...body].join("");
   }
   const count = getSeasonCountForUi(media, route);
-  const options = [`<option value="" ${selected ? "" : "selected"} disabled>${escapeHtml(
-    uiLang === "ar" ? "اختر الموسم" : "Select season"
-  )}</option>`];
+  const options = [`<option value="" ${selected ? "" : "selected"} disabled>${escapeHtml(t("selectSeasonPrompt"))}</option>`];
   for (let idx = 0; idx < count; idx += 1) {
     const n = String(idx + 1);
     options.push(`<option value="${n}" ${selected === n ? "selected" : ""}>${escapeHtml(seasonOptionLabel(n))}</option>`);
@@ -2905,7 +3528,7 @@ function buildEpisodeOptionsHtml(media, seasonValue = "", route = {}) {
   const seasonNum = String(seasonValue || "").trim();
   const selectedEpisode = String(route?.episode || "").trim();
   if (!seasonNum) {
-    return `<option value="" selected>${escapeHtml(uiLang === "ar" ? "اختر الموسم أولًا" : "Select season first")}</option>`;
+    return `<option value="" selected>${escapeHtml(t("selectSeasonFirst"))}</option>`;
   }
   const episodeCount = getEpisodeCountForUi(media, seasonNum, route);
   const options = [`<option value="" ${!selectedEpisode ? "selected" : ""}>${escapeHtml(t("subtitleEpisodeSeasonHint"))}</option>`];
@@ -2963,7 +3586,7 @@ function renderMediaForm(media, route) {
               ${media.voteAverage ? `<span class="pill">⭐ ${escapeHtml(Number(media.voteAverage).toFixed(1))}</span>` : ""}
               ${
                 media.mediaType === "tv" && media.seasonCount
-                  ? `<span class="pill">المواسم: ${escapeHtml(media.seasonCount)}</span>`
+                  ? `<span class="pill">${escapeHtml(t("statSeasonsMetaLabel"))}: ${escapeHtml(media.seasonCount)}</span>`
                   : ""
               }
             </div>
@@ -2981,14 +3604,12 @@ function renderMediaForm(media, route) {
                 ? `<div class="sub-meta" style="margin-top:8px;">
                     ${media.seasons
                       .slice(0, 8)
-                      .map(
-                        (s) =>
-                          `<span class="tag-chip">${escapeHtml(
-                            uiLang === "ar"
-                              ? `الموسم ${s.seasonNumber} • ${s.episodeCount || "—"} حلقات`
-                              : `Season ${s.seasonNumber} • ${s.episodeCount || "—"} eps`
-                          )}</span>`
-                      )
+                      .map((s) => {
+                        const chip = t("mediaSeasonEpisodeChipsTemplate")
+                          .replace("{n}", String(s.seasonNumber))
+                          .replace("{count}", String(s.episodeCount || "—"));
+                        return `<span class="tag-chip">${escapeHtml(chip)}</span>`;
+                      })
                       .join("")}
                   </div>`
                 : ""
@@ -3031,7 +3652,7 @@ function renderMediaForm(media, route) {
               }
               <div class="field">
                 <label for="fileName">${escapeHtml(t("fileMatchLabel"))}</label>
-                <input id="fileName" name="fileName" value="${escapeHtml(selectedFileName)}" placeholder="Example.Show.S01E02.1080p.WEB-DL.x264" />
+                <input id="fileName" name="fileName" value="${escapeHtml(selectedFileName)}" placeholder="${escapeHtml(t("mediaDetailFileMatchPlaceholder"))}" />
               </div>
               <div class="row-actions" style="margin-top:14px;">
                 <button type="submit">${escapeHtml(media.mediaType === "tv" ? t("browseSubtitlesCta") : t("viewSubtitles"))}</button>
@@ -3074,27 +3695,40 @@ function renderMediaForm(media, route) {
 }
 
 async function renderMedia(route) {
-  appEl.innerHTML = `<div class="alert alert-info">${escapeHtml(t("loadingMedia"))}</div>`;
+  appEl.innerHTML = pageStateLoading(t("loadingMedia"));
   try {
     if (!/^\d+$/.test(String(route.tmdbId || ""))) {
-      appEl.innerHTML = `<div class="alert alert-error">${escapeHtml(t("invalidTmdbId"))}</div>`;
+      appEl.innerHTML = pageStateError(
+        t("invalidTmdbId"),
+        t("errorTryAgainHint"),
+        `<a class="btn" href="/search" data-link>${escapeHtml(t("backToSearch"))}</a>`
+      );
       return;
     }
     const media = await getMediaById(route.tmdbId, route.mediaType);
     if (!media) {
-      appEl.innerHTML = `<div class="alert alert-error">${escapeHtml(t("workNotFound"))}</div>`;
+      appEl.innerHTML = pageStateError(
+        t("workNotFound"),
+        t("errorTryAgainShort"),
+        `<a class="btn" href="/search" data-link>${escapeHtml(t("backToSearch"))}</a>`
+      );
       return;
     }
     if (route.year) media.year = route.year;
     state.selectedMedia = media;
-    trackEvent("media_selected", {
-      tmdbId: media.tmdbId,
-      mediaType: media.mediaType
+    trackProductEvent(AnalyticsEvent.MEDIA_PAGE_VIEWED, {
+      ...contextFromRoute({ ...route, page: "media", mediaType: media.mediaType, tmdbId: media.tmdbId }),
+      actionKind: "media_detail_ready"
     });
     recordRecentMediaPage(media, route);
     renderMediaForm(media, route);
-  } catch (err) {
-    appEl.innerHTML = `<div class="alert alert-error">${escapeHtml(t("mediaLoadFailed"))}: ${escapeHtml(err.message)}</div>`;
+    updateDocumentMeta(parseLocation());
+  } catch {
+    appEl.innerHTML = pageStateError(
+      t("mediaLoadFailed"),
+      t("errorTryAgainShort"),
+      `<a class="btn" href="/" data-link>${escapeHtml(t("navHome"))}</a><a class="btn secondary" href="/search" data-link>${escapeHtml(t("navSearch"))}</a>`
+    );
   }
 }
 
@@ -3288,18 +3922,25 @@ function renderSubtitleEmptyState(target, ctx) {
   const actionHtml = actions
     .map((a) => {
       const cls = a.primary ? "btn subtitle-empty-state__action" : "btn secondary subtitle-empty-state__action";
+      const rec = `data-analytics-recovery="${escapeHtml(a.id)}"`;
       if (a.anchor) {
-        return `<a class="${cls}" href="${escapeHtml(a.href)}">${escapeHtml(t(a.labelKey))}</a>`;
+        return `<a class="${cls}" href="${escapeHtml(a.href)}" ${rec}>${escapeHtml(t(a.labelKey))}</a>`;
       }
-      return `<a class="${cls}" href="${escapeHtml(a.href)}" data-link>${escapeHtml(t(a.labelKey))}</a>`;
+      return `<a class="${cls}" href="${escapeHtml(a.href)}" data-link ${rec}>${escapeHtml(t(a.labelKey))}</a>`;
     })
     .join("");
 
   const resetBtn = showResetFilters
-    ? `<button type="button" class="btn secondary subtitle-empty-state__action" id="subtitleEmptyResetFiltersBtn">${escapeHtml(
+    ? `<button type="button" class="btn secondary subtitle-empty-state__action" id="subtitleEmptyResetFiltersBtn" data-analytics-recovery="reset_panel_filters">${escapeHtml(
         t("recoveryResetPanelFilters")
       )}</button>`
     : "";
+  const healthAside =
+    ctx.providerHealth && shouldShowEmptyStateHealthAside(ctx.providerHealth, ctx)
+      ? `<p class="subtitle-empty-state__health hint" role="note">${escapeHtml(
+          getProviderHealthEmptyAside(ctx.providerHealth)
+        )}</p>`
+      : "";
 
   target.innerHTML = `
     <div class="subtitle-empty-state" role="status">
@@ -3307,6 +3948,7 @@ function renderSubtitleEmptyState(target, ctx) {
       <div class="subtitle-empty-state__inner">
         <h3 class="subtitle-empty-state__title">${escapeHtml(title)}</h3>
         <p class="subtitle-empty-state__body">${escapeHtml(body)}</p>
+        ${healthAside}
         <p class="subtitle-empty-state__actions-label">${escapeHtml(t("subtitleEmptyActionsHeading"))}</p>
         <div class="subtitle-empty-state__actions">
           ${actionHtml}
@@ -3362,6 +4004,35 @@ function makeSubtitleGlobalIndexLookup(subtitles) {
   return (sub) => m.get(subtitleStableKey(sub)) ?? 9999;
 }
 
+/** Visual / semantic match row for subtitle cards (TV tiers + softer confidence). */
+function getSubtitleCardMatchPresentation(sub, isTv, rank) {
+  const tvKind = isTv ? String(sub.tvMatchKind || "") : "";
+  const tier = Number(sub.tvMatchTier ?? 0);
+  const conf = String(sub.confidence || "");
+  let typeClass = "sub-item--match-movie";
+  let badgeKey = "subMatchTypeMovie";
+  if (isTv) {
+    if (tvKind === "exactEpisode") {
+      typeClass = "sub-item--match-exact";
+      badgeKey = "subMatchTypeExact";
+    } else if (tvKind === "seasonPack") {
+      typeClass = "sub-item--match-pack";
+      badgeKey = "subMatchTypePack";
+    } else if (tvKind === "seasonScoped") {
+      typeClass = "sub-item--match-scoped";
+      badgeKey = "subMatchTypeScoped";
+    } else {
+      typeClass = "sub-item--match-other";
+      badgeKey = "subMatchTypeLowerConfidence";
+    }
+  }
+  let soft = conf === "medium";
+  if (isTv && tier === 0) soft = true;
+  if (isTv && tvKind === "seasonScoped" && tier <= 1 && rank >= 12) soft = true;
+  const softClass = soft ? " sub-item--confidence-soft" : "";
+  return { typeClass: typeClass + softClass, badgeKey, matchTypeAttr: isTv ? tvKind || "other" : "movie" };
+}
+
 function renderSubtitleCards(target, subtitles) {
   if (!subtitles.length) {
     target.innerHTML = `<p class="empty">${escapeHtml(t("subtitleEmptyFilteredOut"))}</p>`;
@@ -3379,87 +4050,103 @@ function renderSubtitleCards(target, subtitles) {
   const renderCard = (sub) => {
     const rank = globalIdxOf(sub);
     const highlightBest = rank < 6;
-    const rel = Array.isArray(sub.releases) && sub.releases.length ? sub.releases.slice(0, 5).join("، ") : "—";
-    const tvKind = isTv ? sub.tvMatchKind || "" : "";
-    const tvTierBadge =
-      tvKind === "exactEpisode"
-        ? `<span class="tag-chip tag-exact">مطابقة الحلقة</span>`
-        : tvKind === "seasonPack"
-          ? `<span class="tag-chip tag-season-pack">باك الموسم</span>`
-          : tvKind === "seasonScoped"
-            ? `<span class="tag-chip tag-season-generic">ترجمة عامة للموسم</span>`
-            : "";
+    const relSep = t("releasesJoinSeparator");
+    const rel = Array.isArray(sub.releases) && sub.releases.length ? sub.releases.slice(0, 5).join(relSep) : "—";
+    const { typeClass, badgeKey, matchTypeAttr } = getSubtitleCardMatchPresentation(sub, isTv, rank);
     const isTrusted =
       (sub.provider === "opensubtitles" && Number(sub.downloads || 0) >= 1500) ||
       (sub.provider === "subdl" && Number(sub.downloads || 0) >= 700);
     const breakdown = sub.scoreBreakdown || {};
     const meter = confidenceBadgeFromBackend(sub.confidence);
-    const filenameScore = fileTokens.length ? Math.round((Number(breakdown.filenameSimilarity || 0) / 40) * 100) : 0;
-    const reasons = [
-      ...(Array.isArray(sub.topReasons) ? sub.topReasons.map((key) => reasonLabelAr(key)) : []),
+    const whyPreview = buildBestPickReasonBullets(sub).slice(0, 2);
+    const reasonsFull = [
+      ...(Array.isArray(sub.topReasons) ? sub.topReasons.map((key) => reasonLabel(key)) : []),
       Number(sub.score || 0) ? `${t("overallScore")}: ${Number(sub.score).toFixed(1)}` : ""
     ].filter(Boolean);
+    const extras = Array.isArray(sub.meta?.extras) ? sub.meta.extras : [];
     const tags = [
-      sub.meta.resolution && `<span class="tag-chip strong">${sub.meta.resolution}</span>`,
-      sub.meta.source && `<span class="tag-chip">${sub.meta.source}</span>`,
-      sub.meta.codec && `<span class="tag-chip">${sub.meta.codec}</span>`,
-      sub.meta.group && `<span class="tag-chip">GRP ${escapeHtml(sub.meta.group)}</span>`,
-      sub.meta.cdCount && `<span class="tag-chip">CD ${escapeHtml(sub.meta.cdCount)}</span>`,
-      sub.meta.fileCount ? `<span class="tag-chip">${sub.meta.fileCount} files</span>` : "",
-      sub.hearingImpaired ? `<span class="tag-chip tag-hi">HI / SDH</span>` : "",
-      tvTierBadge,
+      sub.meta?.resolution && `<span class="tag-chip strong">${escapeHtml(sub.meta.resolution)}</span>`,
+      sub.meta?.source && `<span class="tag-chip">${escapeHtml(sub.meta.source)}</span>`,
+      sub.meta?.codec && `<span class="tag-chip">${escapeHtml(sub.meta.codec)}</span>`,
+      sub.meta?.group && `<span class="tag-chip">GRP ${escapeHtml(sub.meta.group)}</span>`,
+      sub.meta?.cdCount && `<span class="tag-chip">CD ${escapeHtml(sub.meta.cdCount)}</span>`,
+      sub.meta?.fileCount
+        ? `<span class="tag-chip">${escapeHtml(String(sub.meta.fileCount))} ${escapeHtml(t("filesCountShort"))}</span>`
+        : "",
+      sub.hearingImpaired ? `<span class="tag-chip tag-hi">${escapeHtml(t("hiSdhTag"))}</span>` : "",
       isTrusted ? `<span class="tag-chip tag-trusted">${escapeHtml(t("trusted"))}</span>` : "",
-      ...sub.meta.extras.map((e) => `<span class="tag-chip">${escapeHtml(e)}</span>`)
+      ...extras.map((e) => `<span class="tag-chip">${escapeHtml(e)}</span>`)
     ]
       .filter(Boolean)
       .join("");
+    const whyPreviewHtml =
+      whyPreview.length > 0
+        ? `<div class="sub-item__why">
+            <span class="sub-item__why-label">${escapeHtml(t("subCardWhyPreview"))}</span>
+            <div class="sub-item__why-chips">${whyPreview
+              .map((r) => `<span class="sub-item__why-chip">${escapeHtml(r)}</span>`)
+              .join("")}</div>
+          </div>`
+        : "";
+    const detailsBlock =
+      reasonsFull.length > 0
+        ? `<details class="why-rank why-rank--card">
+            <summary>${escapeHtml(t("whyHighRank"))}</summary>
+            <ul>${reasonsFull.map((r) => `<li>${escapeHtml(r)}</li>`).join("")}</ul>
+            <div class="rank-breakdown">
+              <span>${escapeHtml(t("rankBreakLang"))} ${Number(breakdown.language || 0).toFixed(1)}</span>
+              <span>${escapeHtml(t("rankBreakEpisode"))} ${Number(breakdown.episodeMatch || 0).toFixed(1)}</span>
+              <span>${escapeHtml(t("rankBreakTvTier"))} ${Number(breakdown.tvTierBoost || 0).toFixed(1)}</span>
+              <span>${escapeHtml(t("rankBreakProvider"))} ${Number(breakdown.providerTrust || 0).toFixed(1)}</span>
+              <span>${escapeHtml(t("downloadsCount"))} ${Number(breakdown.downloads || 0).toFixed(1)}</span>
+              <span>${escapeHtml(t("rankBreakFilename"))} ${Number(breakdown.filenameSimilarity || 0).toFixed(1)}</span>
+              <span>${escapeHtml(t("rankBreakComplete"))} ${Number(breakdown.completeness || 0).toFixed(1)}</span>
+            </div>
+          </details>`
+        : "";
+    const scoreChip =
+      Number(sub.score || 0) > 0
+        ? `<span class="sub-item__score pill ${meter.cls}">${escapeHtml(t("overallScore"))} ${escapeHtml(
+            Number(sub.score).toFixed(1)
+          )}</span>`
+        : "";
     return `
-      <article class="sub-item ${highlightBest ? "sub-item-best" : ""} ${rank < 3 ? "sub-item-priority" : "sub-item-secondary"}" data-sub-lang="${escapeHtml(subtitleLanguageGroupKey(sub))}">
-        <div class="sub-head">
-          <div>
-            <div class="sub-title">${escapeHtml(sub.releaseName || "Subtitle")}</div>
-            <div class="hint">${escapeHtml(t("uploader"))}: ${escapeHtml(sub.author || t("unknown"))}</div>
-          </div>
-          <div class="sub-meta">
+      <article class="sub-item ${typeClass}${highlightBest ? " sub-item-best" : ""}${
+        rank < 3 ? " sub-item-priority" : " sub-item-secondary"
+      }" data-sub-lang="${escapeHtml(subtitleLanguageGroupKey(sub))}" data-match-type="${escapeHtml(matchTypeAttr)}">
+        <header class="sub-item__top">
+          <span class="sub-item__type-badge">${escapeHtml(t(badgeKey))}</span>
+          <div class="sub-item__top-meta">${scoreChip}</div>
+        </header>
+        <div class="sub-item__body">
+          <h4 class="sub-title">${escapeHtml(sub.releaseName || "Subtitle")}</h4>
+          <p class="sub-item__uploader hint">${escapeHtml(t("uploader"))}: ${escapeHtml(sub.author || t("unknown"))}</p>
+          <div class="sub-item__pills">
             <span class="pill ${providerPillClass(sub.provider)}">${escapeHtml(providerLabel(sub.provider))}</span>
-            <span class="pill">${escapeHtml(sub.language || "")}${sub.hearingImpaired ? " • HI" : ""}</span>
-            <span class="pill ${meter.cls}">${escapeHtml(t("confidence"))}: ${meter.label}</span>
+            <span class="pill">${escapeHtml(sub.language || "")}${sub.hearingImpaired ? ` · ${escapeHtml(t("subtitleHiAbbr"))}` : ""}</span>
+            <span class="pill ${meter.cls}">${escapeHtml(t("confidence"))}: ${escapeHtml(meter.label)}</span>
           </div>
+          ${tags ? `<div class="sub-item__tags sub-meta">${tags}</div>` : ""}
+          ${whyPreviewHtml}
+          <div class="sub-item__secondary hint">
+            <span class="sub-item__releases"><span class="sub-item__k">${escapeHtml(t("releasesLabel"))}</span> ${escapeHtml(rel)}</span>
+            ${
+              sub.downloads
+                ? `<span class="sub-item__downloads">${escapeHtml(t("downloadsCount"))}: ${escapeHtml(String(sub.downloads))}</span>`
+                : ""
+            }
+          </div>
+          ${sub.comment ? `<p class="sub-item__comment hint">${escapeHtml(t("note"))}: ${escapeHtml(sub.comment)}</p>` : ""}
+          ${detailsBlock}
         </div>
-        <div class="sub-meta">${tags}</div>
-        ${
-          Array.isArray(sub.topReasons) && sub.topReasons.length
-            ? `<div class="sub-meta">${sub.topReasons
-                .map((key) => `<span class="tag-chip">${escapeHtml(reasonLabelAr(key))}</span>`)
-                .join("")}</div>`
-            : ""
-        }
-        <div class="hint">${escapeHtml(t("releasesLabel"))}: ${escapeHtml(rel)}</div>
-        ${sub.downloads ? `<div class="hint">${escapeHtml(t("downloadsCount"))}: ${escapeHtml(sub.downloads)}</div>` : ""}
-        ${sub.comment ? `<div class="hint">${escapeHtml(t("note"))}: ${escapeHtml(sub.comment)}</div>` : ""}
-        ${
-          reasons.length
-            ? `<details class="why-rank"><summary>${escapeHtml(t("whyHighRank"))}</summary><ul>${reasons
-                .map((r) => `<li>${escapeHtml(r)}</li>`)
-                .join("")}</ul>
-                <div class="rank-breakdown">
-                  <span>اللغة ${Number(breakdown.language || 0).toFixed(1)}</span>
-                  <span>الحلقة ${Number(breakdown.episodeMatch || 0).toFixed(1)}</span>
-                  <span>تصنيف TV ${Number(breakdown.tvTierBoost || 0).toFixed(1)}</span>
-                  <span>المزوّد ${Number(breakdown.providerTrust || 0).toFixed(1)}</span>
-                  <span>${escapeHtml(t("downloadsCount"))} ${Number(breakdown.downloads || 0).toFixed(1)}</span>
-                  <span>اسم الملف ${Number(breakdown.filenameSimilarity || 0).toFixed(1)}</span>
-                  <span>الاكتمال ${Number(breakdown.completeness || 0).toFixed(1)}</span>
-                </div>
-              </details>`
-            : ""
-        }
-        <div class="sub-actions">
-          <p class="hint">${escapeHtml(uiLang === "ar" ? "مصدر مباشر" : "Direct source")}: ${escapeHtml(providerLabel(sub.provider))}</p>
-          <div class="row-actions"><a class="btn btn-sm" data-download="1" data-provider="${escapeHtml(
-            sub.provider || ""
-          )}" href="${escapeHtml(sub.downloadUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(t("download"))}</a></div>
-        </div>
+        <footer class="sub-item__actions">
+          <div class="sub-item__source" aria-label="${escapeHtml(t("directSourceShort"))}">
+            <span class="sub-item__source-label">${escapeHtml(t("directSourceShort"))}</span>
+            <span class="sub-item__source-name">${escapeHtml(providerLabel(sub.provider))}</span>
+            ${isTrusted ? `<span class="sub-item__source-trust">${escapeHtml(t("sourceTrustHigh"))}</span>` : ""}
+          </div>
+          ${renderSubtitlePrimaryDownloadControl(sub)}
+        </footer>
       </article>
     `;
   };
@@ -3486,10 +4173,10 @@ function renderSubtitleCards(target, subtitles) {
       .map(
         ({ key, items }) => `
       <section class="subtitle-group subtitle-group--by-lang" data-lang-group="${escapeHtml(key)}">
-        <div class="subtitle-lang-head">
+        <header class="subtitle-lang-head">
           <h3 class="subtitle-lang-head__title">${escapeHtml(subtitleLanguageGroupTitle(key))}</h3>
-          <span class="pill pill--subtle" aria-hidden="true">${items.length}</span>
-        </div>
+          <span class="subtitle-section-head__count" aria-label="${escapeHtml(String(items.length))} ${escapeHtml(t("subtitleCardsInSection"))}">${items.length}</span>
+        </header>
         <div class="sub-list">${items.map((sub) => renderCard(sub)).join("")}</div>
       </section>`
       )
@@ -3509,8 +4196,11 @@ function renderSubtitleCards(target, subtitles) {
   const preferredOrder = ["2160P", "1080P", "720P", "480P", "OTHER"];
   const orderedKeys = [...new Set([...preferredOrder, ...groups.keys()])].filter((k) => groups.get(k)?.length);
   const bestSection = `
-    <section class="subtitle-group">
-      <h3 class="result-group-title">${escapeHtml(t("bestMatches"))}</h3>
+    <section class="subtitle-group subtitle-group--best">
+      <header class="subtitle-section-head">
+        <h3 class="result-group-title">${escapeHtml(t("bestMatches"))}</h3>
+        <span class="subtitle-section-head__count" aria-label="${escapeHtml(String(bestMatches.length))} ${escapeHtml(t("subtitleCardsInSection"))}">${bestMatches.length}</span>
+      </header>
       <div class="sub-list">
         ${bestMatches.map((sub) => renderCard(sub)).join("")}
       </div>
@@ -3522,7 +4212,7 @@ function renderSubtitleCards(target, subtitles) {
       const items = groups.get(key) || [];
       const sectionTitle = key === "OTHER" ? t("otherSubtitles") : `${t("qualityPrefix")} ${key}`;
       const cards = items.map((sub) => renderCard(sub)).join("");
-      return `<section class="subtitle-group"><h3 class="result-group-title">${sectionTitle}</h3><div class="sub-list">${cards}</div></section>`;
+      return `<section class="subtitle-group"><header class="subtitle-section-head"><h3 class="result-group-title">${escapeHtml(sectionTitle)}</h3><span class="subtitle-section-head__count" aria-label="${escapeHtml(String(items.length))} ${escapeHtml(t("subtitleCardsInSection"))}">${items.length}</span></header><div class="sub-list">${cards}</div></section>`;
     })
     .join("");
   target.innerHTML = bestSection + groupedSections;
@@ -3536,7 +4226,11 @@ function readTvKindsFromAddressBar() {
 
 async function renderSubtitles(route) {
   if (!/^\d+$/.test(String(route.tmdbId || ""))) {
-    appEl.innerHTML = `<div class="alert alert-error">${escapeHtml(t("invalidTmdbId"))}</div>`;
+    appEl.innerHTML = pageStateError(
+      t("invalidTmdbId"),
+      t("errorTryAgainHint"),
+      `<a class="btn" href="/search" data-link>${escapeHtml(t("backToSearch"))}</a>`
+    );
     return;
   }
   const media =
@@ -3546,6 +4240,7 @@ async function renderSubtitles(route) {
       ? state.selectedMedia
       : await getMediaById(route.tmdbId, route.mediaType);
   if (media) state.selectedMedia = media;
+  updateDocumentMeta(parseLocation());
   const effectiveFileName = route.fileName || getSubtitlePreferences().fileName || "";
 
   if (route.mediaType === "tv" && !route.season) {
@@ -3559,9 +4254,11 @@ async function renderSubtitles(route) {
       <section class="card">
         <div class="card-inner">
           <div class="alert alert-info">
-            يجب اختيار <strong>رقم الموسم</strong> أولًا قبل البحث عن ترجمات المسلسل. لا نُشغّل بحثًا عامًا بدون موسم حتى لا تظهر نتائج مضللة.
+            ${escapeHtml(t("tvMustPickSeasonBeforeStrong"))}<strong>${escapeHtml(t("tvMustPickSeasonStrong"))}</strong>${escapeHtml(
+              t("tvMustPickSeasonAfterStrong")
+            )}${escapeHtml(t("tvMustPickSeasonNoBroadSearch"))}
           </div>
-          <p class="hint">اذهب إلى صفحة تفاصيل العمل، أدخل الموسم (والحلقة لاحقًا إن أردت ترجمات حلقة محددة)، ثم افتح صفحة الترجمات من هناك.</p>
+          <p class="hint">${escapeHtml(t("tvMustPickSeasonNextSteps"))}</p>
           <div class="row-actions">
             ${
               media
@@ -3569,7 +4266,7 @@ async function renderSubtitles(route) {
                     year: route.year || media.year || "",
                     lang: route.language,
                     provider: route.provider
-                  })}" data-link>${escapeHtml(uiLang === "ar" ? "العودة لتحديد الموسم" : "Back to season selection")}</a>`
+                  })}" data-link>${escapeHtml(t("backToSeasonSelection"))}</a>`
                 : `<a class="btn" href="/search" data-link>${escapeHtml(t("backToSearch"))}</a>`
             }
           </div>
@@ -3603,12 +4300,8 @@ async function renderSubtitles(route) {
       <section class="card tv-episode-panel">
         <div class="card-inner">
           <div class="section-header" style="margin:0 0 10px;">
-            <h2 class="section-title">${escapeHtml(uiLang === "ar" ? "اختيار الموسم والحلقة" : "Season & episode selection")}</h2>
-            <span class="section-sub">${escapeHtml(
-              uiLang === "ar"
-                ? "الموسم مطلوب — الحلقة اختيارية (بدون حلقة: كل ترجمات الموسم، بما فيها ترجمات الحلقات من نفس الموسم)"
-                : "Season is required, episode is optional (no episode = season-level subtitles, including same-season episodes)."
-            )}</span>
+            <h2 class="section-title">${escapeHtml(t("tvSeasonEpisodePanelTitle"))}</h2>
+            <span class="section-sub">${escapeHtml(t("tvSeasonEpisodePanelSub"))}</span>
           </div>
           <form id="tvJumpForm" class="form-grid two-col">
             <div class="field">
@@ -3640,8 +4333,10 @@ async function renderSubtitles(route) {
         <p class="hint">${escapeHtml(t("pasteFilenameHint"))}</p>
         <form id="fileMatchForm" class="form-grid">
           <div class="field">
-            <label for="fileMatchInput">اسم ملف الفيديو (اختياري)</label>
-            <input id="fileMatchInput" name="fileName" value="${escapeHtml(effectiveFileName)}" placeholder="Movie.2024.1080p.WEB-DL.x264-GROUP.mkv" />
+            <label for="fileMatchInput">${escapeHtml(t("videoFilenameOptionalLabel"))}</label>
+            <input id="fileMatchInput" name="fileName" value="${escapeHtml(effectiveFileName)}" placeholder="${escapeHtml(
+              t("fileMatchPlaceholderExample")
+            )}" />
           </div>
           <div class="row-actions">
             <button type="submit" class="btn-sm">${escapeHtml(t("improveRanking"))}</button>
@@ -3666,18 +4361,18 @@ async function renderSubtitles(route) {
           </div>
           <form id="subFilterForm" class="form-grid">
             <div class="field">
-              <label>بحث داخل النتائج</label>
-              <input name="text" placeholder="${escapeHtml(uiLang === "ar" ? "اسم الإصدار أو الملاحظات..." : "Release name or notes...")}" />
+              <label>${escapeHtml(t("searchInResults"))}</label>
+              <input name="text" placeholder="${escapeHtml(t("searchInResultsPlaceholder"))}" />
             </div>
             <div class="form-grid two-col">
               <div class="field">
-                <label>اللغة</label>
+                <label>${escapeHtml(t("subtitleLanguage"))}</label>
                 <select name="languageFilter">
                   <option value="all">${escapeHtml(t("languageAll"))}</option>
                 </select>
               </div>
               <div class="field">
-                <label>المزوّد</label>
+                <label>${escapeHtml(t("subtitleProvider"))}</label>
                 <select name="providerFilter">
                   <option value="all">${escapeHtml(t("languageAll"))}</option>
                   <option value="subdl">SubDL</option>
@@ -3687,60 +4382,60 @@ async function renderSubtitles(route) {
             </div>
             <div class="form-grid two-col">
               <div class="field">
-                <label>جودة الصورة</label>
+                <label>${escapeHtml(t("imageQuality"))}</label>
                 <select name="resolutionFilter"><option value="all">${escapeHtml(t("languageAll"))}</option></select>
               </div>
               <div class="field">
-                <label>المصدر</label>
+                <label>${escapeHtml(t("source"))}</label>
                 <select name="sourceFilter"><option value="all">${escapeHtml(t("languageAll"))}</option></select>
               </div>
             </div>
             <div class="form-grid two-col">
               <div class="field">
-                <label>الترميز</label>
+                <label>${escapeHtml(t("codec"))}</label>
                 <select name="codecFilter"><option value="all">${escapeHtml(t("languageAll"))}</option></select>
               </div>
               <div class="field">
-                <label>الترتيب</label>
+                <label>${escapeHtml(t("sorting"))}</label>
                 <select name="sort">
-                  <option value="best">أفضل تطابق (موصى به)</option>
+                  <option value="best">${escapeHtml(t("sortBest"))}</option>
                   <option value="downloads">${escapeHtml(t("sortDownloads"))}</option>
-                  <option value="trusted">الموثوق أولًا</option>
-                  <option value="newest">أحدث اسم إصدار</option>
-                  <option value="alphabetical">أبجديًا</option>
+                  <option value="trusted">${escapeHtml(t("sortTrusted"))}</option>
+                  <option value="newest">${escapeHtml(t("sortNewest"))}</option>
+                  <option value="alphabetical">${escapeHtml(t("sortAlpha"))}</option>
                 </select>
               </div>
             </div>
             <div class="form-grid two-col">
               <div class="field">
-                <label>SDH / HI</label>
+                <label>${escapeHtml(t("hiFilterLabel"))}</label>
                 <select name="hiFilter">
-                  <option value="all">الكل</option>
-                  <option value="only">فقط HI</option>
-                  <option value="exclude">استبعاد HI</option>
+                  <option value="all">${escapeHtml(t("languageAll"))}</option>
+                  <option value="only">${escapeHtml(t("hiFilterOnly"))}</option>
+                  <option value="exclude">${escapeHtml(t("hiFilterExclude"))}</option>
                 </select>
               </div>
-              <div class="field"><label>${escapeHtml(t("help"))}</label><div class="hint">${escapeHtml(uiLang === "ar" ? "يمكنك التصفية حسب الجودة والمصدر والترميز مباشرة." : "You can filter directly by resolution, source, and codec.")}</div></div>
+              <div class="field"><label>${escapeHtml(t("help"))}</label><div class="hint">${escapeHtml(t("filterHelpHint"))}</div></div>
             </div>
             <div class="row-actions">
-              <button type="button" id="applySubFilters" class="btn-sm">تطبيق</button>
-              <button type="button" id="resetSubFilters" class="secondary btn-sm">إعادة ضبط</button>
+              <button type="button" id="applySubFilters" class="btn-sm">${escapeHtml(t("apply"))}</button>
+              <button type="button" id="resetSubFilters" class="secondary btn-sm">${escapeHtml(t("reset"))}</button>
             </div>
             <div class="preset-chips" id="presetChips">
-              <button type="button" class="secondary btn-sm" data-preset="best">Best Match</button>
+              <button type="button" class="secondary btn-sm" data-preset="best">${escapeHtml(t("presetBestMatch"))}</button>
               <button type="button" class="secondary btn-sm" data-preset="1080p">1080p</button>
               <button type="button" class="secondary btn-sm" data-preset="webdl">WEB-DL</button>
               <button type="button" class="secondary btn-sm" data-preset="bluray">BluRay</button>
-              <button type="button" class="secondary btn-sm" data-preset="nonhi">Non-HI</button>
-              <button type="button" class="secondary btn-sm" data-preset="ar">Arabic</button>
-              <button type="button" class="secondary btn-sm" data-preset="en">English</button>
+              <button type="button" class="secondary btn-sm" data-preset="nonhi">${escapeHtml(t("presetNonHi"))}</button>
+              <button type="button" class="secondary btn-sm" data-preset="ar">${escapeHtml(t("presetArabic"))}</button>
+              <button type="button" class="secondary btn-sm" data-preset="en">${escapeHtml(t("presetEnglish"))}</button>
               <button type="button" class="secondary btn-sm" data-preset="opensubtitles">OpenSubtitles</button>
               <button type="button" class="secondary btn-sm" data-preset="subdl">SubDL</button>
-              <button type="button" class="secondary btn-sm" data-preset="clear">Clear</button>
+              <button type="button" class="secondary btn-sm" data-preset="clear">${escapeHtml(t("presetClear"))}</button>
             </div>
             <div id="activeFilterChips" class="recent-searches"></div>
           </form>
-          <p class="footer-note">يمكنك البحث عن فيلم آخر مباشرة من شريط البحث بالأعلى بدون الرجوع.</p>
+          <p class="footer-note">${escapeHtml(t("subtitleFilterSidebarFooter"))}</p>
         </div>
       </aside>
       <section>
@@ -3750,18 +4445,18 @@ async function renderSubtitles(route) {
               <h1 class="section-title" style="font-size:1.4rem;">${escapeHtml(t("subtitleResultsTitle"))}</h1>
               <span class="pill" id="subtitleCount"></span>
             </div>
-            <p class="hint">${media ? escapeHtml(media.title) : `TMDb ${escapeHtml(route.tmdbId)}`} — اللغة: ${escapeHtml(route.language)} — المزود: ${escapeHtml(route.provider)}</p>
-            <div class="row-actions" style="margin-top:14px;">${media ? "" : `<a class="btn secondary btn-sm" href="/search" data-link>← العودة للبحث</a>`}</div>
+            <p class="hint">${media ? escapeHtml(media.title) : `TMDb ${escapeHtml(route.tmdbId)}`} — ${escapeHtml(t("resultsSummaryLanguage"))}: ${escapeHtml(route.language)} — ${escapeHtml(t("resultsSummaryProvider"))}: ${escapeHtml(route.provider)}</p>
+            <div class="row-actions" style="margin-top:14px;">${media ? "" : `<a class="btn secondary btn-sm" href="/search" data-link>${escapeHtml(t("backToSearchWithArrow"))}</a>`}</div>
           </div>
         </div>
         <div id="subtitleInsights" class="card" style="margin-top:10px;"><div class="card-inner hint">—</div></div>
         ${isSubtitleDevDiagnosticsEnabled() ? `<div id="subtitleDevDiagnostics" class="card dev-diagnostics" dir="rtl" data-dev-panel="subtitles"><div class="card-inner dev-diagnostics__inner"></div></div>` : ""}
         ${
           route.mediaType === "tv" && tvQuickChipDefs.length
-            ? `<div id="tvMatchChipBar" class="tv-match-chip-bar" dir="${uiLang === "ar" ? "rtl" : "ltr"}" role="toolbar" aria-label="${escapeHtml(uiLang === "ar" ? "تصفية نوع تطابق ترجمة المسلسل" : "Filter TV subtitle match type")}">
+            ? `<div id="tvMatchChipBar" class="tv-match-chip-bar" dir="${uiLang === "ar" ? "rtl" : "ltr"}" role="toolbar" aria-label="${escapeHtml(t("tvChipBarAria"))}">
           <div class="tv-match-chip-bar__head">
-            <span class="tv-match-chip-bar__title">تصفية سريعة حسب نوع التطابق</span>
-            <button type="button" class="tv-match-chip-bar__clear secondary btn-sm" id="tvMatchShowAllBtn" hidden>إظهار الكل</button>
+            <span class="tv-match-chip-bar__title">${escapeHtml(t("tvChipBarTitle"))}</span>
+            <button type="button" class="tv-match-chip-bar__clear secondary btn-sm" id="tvMatchShowAllBtn" hidden>${escapeHtml(t("tvChipBarShowAll"))}</button>
           </div>
           <p class="tv-match-chip-bar__hint">${escapeHtml(tvChipBarHint)}</p>
           <div class="tv-match-chip-bar__scroll">
@@ -3853,9 +4548,11 @@ async function renderSubtitles(route) {
       e.preventDefault();
       const fileName = fileMatchForm.fileName.value.trim();
       saveSubtitlePreferences({ fileName });
-      trackEvent("filename_matching_used", {
+      trackProductEvent(AnalyticsEvent.FILENAME_MATCHING_USED, {
+        ...subtitlesViewContext(route, { tvQueryMode: null }),
         enabled: Boolean(fileName),
-        fileNameLength: fileName.length
+        fileNameLength: fileName.length,
+        actionKind: "filename_panel_submit"
       });
       const next = toSubtitlesUrl(media, {
         language: route.language,
@@ -3882,7 +4579,7 @@ async function renderSubtitles(route) {
     });
     navigate(next);
   });
-  status.innerHTML = `<div class="alert alert-info">${escapeHtml(t("loadingSubtitles"))}</div>`;
+  status.innerHTML = pageStateLoading(t("loadingSubtitles"));
   list.innerHTML = `<div class="skeleton-grid">${Array.from({ length: 5 })
     .map(() => `<div class="skeleton-card"></div>`)
     .join("")}</div>`;
@@ -3900,18 +4597,19 @@ async function renderSubtitles(route) {
     const tvQueryModeFromApi = data.tvQueryMode || null;
     const pipelineDiagnostics = data.diagnostics || null;
     const providerErrorsList = Array.isArray(data.providerErrors) ? data.providerErrors : [];
+    const providerHealthSnapshot = mergeProviderHealthFromApi(data);
     const base = (data.subtitles || []).map((s) => ({ ...s, meta: parseReleaseMetadata(s) }));
     const alternateBase = (data.alternateSubtitles || []).map((s) => ({ ...s, meta: parseReleaseMetadata(s) }));
     if (media) recordRecentSubtitlesPage(media, route);
-    trackEvent("subtitle_results_viewed", {
-      mediaType: route.mediaType,
-      language: route.language,
-      provider: route.provider,
-      season: route.season || "",
-      episode: route.episode || "",
-      primaryCount: base.length,
-      alternateCount: alternateBase.length,
-      providerErrors: providerErrorsList.length
+    trackProductEvent(AnalyticsEvent.SUBTITLES_PAGE_VIEWED, {
+      ...subtitlesViewContext(route, {
+        tvQueryMode: tvQueryModeFromApi,
+        providerHealthTier: providerHealthSnapshot?.tier,
+        resultCount: base.length,
+        alternateSubtitleCount: alternateBase.length,
+        providerErrorCount: providerErrorsList.length,
+        actionKind: "subtitles_fetch_ready"
+      })
     });
     const form = document.getElementById("subFilterForm");
     const prefs = getSubtitlePreferences();
@@ -3939,16 +4637,16 @@ async function renderSubtitles(route) {
       ...base.map((s) => s.meta.codec),
       ...alternateBase.map((s) => s.meta.codec)
     ]);
-    form.languageFilter.innerHTML = `<option value="all">الكل</option>${langSet
+    form.languageFilter.innerHTML = `<option value="all">${escapeHtml(t("languageAll"))}</option>${langSet
       .map((l) => `<option value="${escapeHtml(l)}">${escapeHtml(l.toUpperCase())}</option>`)
       .join("")}`;
-    form.resolutionFilter.innerHTML = `<option value="all">الكل</option>${resolutionSet
+    form.resolutionFilter.innerHTML = `<option value="all">${escapeHtml(t("languageAll"))}</option>${resolutionSet
       .map((r) => `<option value="${escapeHtml(r)}">${escapeHtml(r)}</option>`)
       .join("")}`;
-    form.sourceFilter.innerHTML = `<option value="all">الكل</option>${sourceSet
+    form.sourceFilter.innerHTML = `<option value="all">${escapeHtml(t("languageAll"))}</option>${sourceSet
       .map((s) => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`)
       .join("")}`;
-    form.codecFilter.innerHTML = `<option value="all">الكل</option>${codecSet
+    form.codecFilter.innerHTML = `<option value="all">${escapeHtml(t("languageAll"))}</option>${codecSet
       .map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`)
       .join("")}`;
     form.languageFilter.value =
@@ -4019,6 +4717,10 @@ async function renderSubtitles(route) {
               tvKindFilter: tvKindSelection.size ? [...tvKindSelection] : undefined
             })
           : [];
+      const pick = selectBestSubtitleRecommendation(filtered, {
+        mediaType: route.mediaType,
+        episode: route.episode
+      });
       saveSubtitlePreferences({
         language: form.languageFilter.value,
         provider: form.providerFilter.value,
@@ -4026,19 +4728,22 @@ async function renderSubtitles(route) {
         hi: form.hiFilter.value,
         fileName: effectiveFileName
       });
-      trackEvent("subtitle_filters_applied", {
-        language: form.languageFilter.value,
-        provider: form.providerFilter.value,
-        sort: form.sort.value,
-        hi: form.hiFilter.value,
-        hasFilename: Boolean(effectiveFileName),
-        tvKinds: route.mediaType === "tv" ? [...tvKindSelection] : undefined
+      trackProductEvent(AnalyticsEvent.SUBTITLE_FILTERS_CHANGED, {
+        ...subtitlesViewContext(route, {
+          tvQueryMode: tvQueryModeFromApi,
+          providerHealthTier: providerHealthSnapshot?.tier,
+          language: form.languageFilter.value,
+          provider: form.providerFilter.value,
+          sort: form.sort.value,
+          hi: form.hiFilter.value,
+          hasFilename: Boolean(effectiveFileName),
+          tvKinds: route.mediaType === "tv" ? [...tvKindSelection].join(",") : undefined,
+          resultCount: filtered.length,
+          hasBestPick: Boolean(pick),
+          actionKind: "subtitle_panel_apply"
+        })
       });
-      const pick = selectBestSubtitleRecommendation(filtered, {
-        mediaType: route.mediaType,
-        episode: route.episode
-      });
-      renderSubtitleBestPick(bestPickHost, pick);
+      renderSubtitleBestPick(bestPickHost, pick, providerHealthSnapshot);
 
       const hasSeasonAlternates =
         !filtered.length &&
@@ -4057,24 +4762,38 @@ async function renderSubtitles(route) {
           hasSeasonAlternates,
           tvQueryModeFromApi,
           filtersEmptyOnly: base.length > 0,
-          mediaType: route.mediaType
+          mediaType: route.mediaType,
+          providerHealth: providerHealthSnapshot
         });
         list.querySelector("#subtitleEmptyResetFiltersBtn")?.addEventListener("click", () => {
           document.getElementById("resetSubFilters")?.click();
         });
-        trackEvent("subtitle_empty_state_shown", {
-          hasSeasonAlternates,
-          filtersEmptyOnly: base.length > 0 && !hasSeasonAlternates
+        trackProductEvent(AnalyticsEvent.NO_RESULTS_SHOWN, {
+          ...subtitlesViewContext(route, {
+            tvQueryMode: tvQueryModeFromApi,
+            providerHealthTier: providerHealthSnapshot?.tier,
+            resultCount: 0,
+            hasBestPick: false,
+            hasSeasonAlternates,
+            filtersEmptyOnly: base.length > 0 && !hasSeasonAlternates,
+            actionKind: "subtitle_empty_state"
+          })
         });
       } else {
         if (pick) {
-          trackEvent("subtitle_best_pick_shown", {
-            provider: pick.sub.provider || "",
-            score: Number(pick.sub.score || 0),
-            confidence: pick.sub.confidence || "",
-            tvMatchKind: pick.sub.tvMatchKind || "",
-            filteredCount: filtered.length,
-            deduped: filtered.length > 1
+          trackProductEvent(AnalyticsEvent.SUBTITLE_BEST_PICK_SHOWN, {
+            ...subtitlesViewContext(route, {
+              tvQueryMode: tvQueryModeFromApi,
+              providerHealthTier: providerHealthSnapshot?.tier,
+              provider: pick.sub.provider || "",
+              score: Number(pick.sub.score || 0),
+              confidence: pick.sub.confidence || "",
+              tvMatchKind: pick.sub.tvMatchKind || "",
+              resultCount: filtered.length,
+              hasBestPick: true,
+              listDeduped: filtered.length > 1,
+              actionKind: "best_pick_card"
+            })
           });
         }
         const excludeKey = pick && filtered.length > 1 ? subtitleStableKey(pick.sub) : null;
@@ -4092,7 +4811,7 @@ async function renderSubtitles(route) {
           alternateSection.innerHTML = `
             <div class="card subtitle-alternate-card">
               <div class="card-inner">
-                <h3 class="subtitle-alternate-title">بدائل من نفس الموسم</h3>
+                <h3 class="subtitle-alternate-title">${escapeHtml(t("seasonAlternatives"))}</h3>
                 ${buildTvAlternateSectionIntroHtml(filteredAlt, filtered.length > 0)}
                 <div id="subtitleAlternateList" class="sub-list sub-list--alternate"></div>
               </div>
@@ -4104,10 +4823,17 @@ async function renderSubtitles(route) {
               .querySelector(".subtitle-alternate-card .card-inner")
               ?.insertAdjacentHTML(
                 "beforeend",
-                `<div class="row-actions"><button type="button" class="secondary" id="loadMoreAlternateSubtitlesBtn">عرض المزيد من البدائل (${filteredAlt.length - altVisible.length})</button></div>`
+                `<div class="row-actions"><button type="button" class="secondary" id="loadMoreAlternateSubtitlesBtn">${escapeHtml(t("loadMoreAlternates"))} (${filteredAlt.length - altVisible.length})</button></div>`
               );
             document.getElementById("loadMoreAlternateSubtitlesBtn")?.addEventListener("click", () => {
               visibleAlternateSubtitleCount += 40;
+              trackProductEvent(AnalyticsEvent.LOAD_MORE_CLICKED, {
+                ...subtitlesViewContext(route, {
+                  tvQueryMode: tvQueryModeFromApi,
+                  surface: "subtitle_alternates",
+                  actionKind: "pagination"
+                })
+              });
               apply(false);
             });
           }
@@ -4123,7 +4849,7 @@ async function renderSubtitles(route) {
         route.mediaType === "tv" && tvKindSelection.size
           ? [...tvKindSelection]
               .map((k) => getTvQuickFilterKinds().find((x) => x.kind === k)?.label || k)
-              .join(uiLang === "ar" ? "، " : ", ")
+              .join(t("inlineListSeparator"))
           : "";
       const activeFilters = [
         form.languageFilter.value !== "all" ? `${t("subtitleLanguage")}: ${form.languageFilter.value.toUpperCase()}` : "",
@@ -4131,8 +4857,12 @@ async function renderSubtitles(route) {
         form.resolutionFilter.value !== "all" ? `${t("imageQuality")}: ${form.resolutionFilter.value}` : "",
         form.sourceFilter.value !== "all" ? `${t("source")}: ${form.sourceFilter.value}` : "",
         form.codecFilter.value !== "all" ? `${t("codec")}: ${form.codecFilter.value}` : "",
-        form.hiFilter.value !== "all" ? `HI: ${form.hiFilter.value}` : "",
-        tvKindLabels ? `تطابق المسلسل: ${tvKindLabels}` : ""
+        form.hiFilter.value === "only"
+          ? t("hiFilterOnly")
+          : form.hiFilter.value === "exclude"
+            ? t("hiFilterExclude")
+            : "",
+        tvKindLabels ? `${t("activeFilterTvMatch")}: ${tvKindLabels}` : ""
       ].filter(Boolean);
       document.getElementById("activeFilterChips").innerHTML = activeFilters
         .map((f) => `<span class="pill">${escapeHtml(f)}</span>`)
@@ -4154,6 +4884,7 @@ async function renderSubtitles(route) {
         subtitleDevDiagnosticsCopySnapshot = {
           pipelineDiagnostics,
           providerErrors: providerErrorsList,
+          providerHealth: providerHealthSnapshot,
           route,
           tvQueryModeFromApi,
           baseLength: base.length,
@@ -4179,22 +4910,23 @@ async function renderSubtitles(route) {
       }
       insights.querySelector(".card-inner").innerHTML = `
         <div class="sub-meta">
-          <span class="pill">إجمالي النتائج: ${filtered.length}</span>
+          <span class="pill">${escapeHtml(t("resultsCount"))}: ${filtered.length}</span>
           <span class="pill">${escapeHtml(t("bestMatches"))}: ${Math.min(filtered.length, 6)}</span>
+          ${buildProviderHealthInsightPillsHtml(providerHealthSnapshot)}
           ${
             route.mediaType === "tv" && tvQueryModeFromApi
               ? `<span class="pill">${tvQueryModeFromApi === "episode" ? escapeHtml(t("tvModeEpisodeStrict")) : escapeHtml(t("tvModeSeasonBroad"))}</span>`
               : ""
           }
-          ${effectiveFileName ? `<span class="pill">${escapeHtml(uiLang === "ar" ? "مطابقة الملف: مفعّلة" : "Filename matching: enabled")}</span>` : ""}
-          ${route.mediaType === "tv" && tvKindSelection.size ? `<span class="pill">${escapeHtml(uiLang === "ar" ? "تصفية نوع الترجمة" : "TV match filter")}: ${tvKindSelection.size}</span>` : ""}
+          ${effectiveFileName ? `<span class="pill">${escapeHtml(t("insightFilenameMatchOn"))}</span>` : ""}
+          ${route.mediaType === "tv" && tvKindSelection.size ? `<span class="pill">${escapeHtml(t("insightTvMatchFilterPill"))}: ${tvKindSelection.size}</span>` : ""}
           ${
             route.mediaType === "tv" && String(route.episode || "").trim() && filteredAlt.length
-              ? `<span class="pill">بدائل الموسم (بعد الفلاتر): ${filteredAlt.length}</span>`
+              ? `<span class="pill">${escapeHtml(t("subtitleInsightSeasonAltsFiltered"))}: ${filteredAlt.length}</span>`
               : ""
           }
-          ${activeFilters.length ? `<span class="pill">${escapeHtml(uiLang === "ar" ? "فلاتر نشطة" : "Active filters")}: ${activeFilters.length}</span>` : ""}
-          <span class="pill">نمط الترتيب: ${escapeHtml(form.sort.value)}</span>
+          ${activeFilters.length ? `<span class="pill">${escapeHtml(t("insightActiveFilters"))}: ${activeFilters.length}</span>` : ""}
+          <span class="pill">${escapeHtml(t("sorting"))}: ${escapeHtml(subtitleSortOptionLabel(form.sort.value))}</span>
         </div>
       `;
       status.querySelectorAll(".subtitle-empty-status").forEach((el) => el.remove());
@@ -4207,26 +4939,41 @@ async function renderSubtitles(route) {
       if (forList.length > visible.length) {
         list.insertAdjacentHTML(
           "beforeend",
-          `<div class="row-actions"><button type="button" class="secondary" id="loadMoreSubtitlesBtn">عرض المزيد (${forList.length - visible.length})</button></div>`
+          `<div class="sub-list-actions"><button type="button" class="btn secondary btn-load-more-subtitles" id="loadMoreSubtitlesBtn">${escapeHtml(t("loadMoreSubtitles"))} (${forList.length - visible.length})</button></div>`
         );
         document.getElementById("loadMoreSubtitlesBtn")?.addEventListener("click", () => {
           visibleSubtitleCount += 40;
+          trackProductEvent(AnalyticsEvent.LOAD_MORE_CLICKED, {
+            ...subtitlesViewContext(route, {
+              tvQueryMode: tvQueryModeFromApi,
+              providerHealthTier: providerHealthSnapshot?.tier,
+              surface: "subtitle_list",
+              actionKind: "pagination"
+            })
+          });
           apply(false);
         });
       }
     };
 
-    status.innerHTML = "";
-    if (Array.isArray(data.providerErrors) && data.providerErrors.length) {
-      status.innerHTML = `<div class="alert alert-info">${escapeHtml(t("limitedResultsNotice"))}</div>`;
-      if (isSubtitleDevDiagnosticsEnabled()) {
-        status.insertAdjacentHTML(
-          "beforeend",
-          `<div class="hint" style="margin-top:6px;">${escapeHtml(
-            data.providerErrors.map((e) => `${e.provider}: ${e.message}`).join(" | ")
-          )}</div>`
-        );
-      }
+    const providerHealthBannerHtml = buildProviderHealthStatusHtml(providerHealthSnapshot);
+    status.innerHTML = providerHealthBannerHtml;
+    if (String(providerHealthBannerHtml || "").trim()) {
+      trackProductEvent(AnalyticsEvent.PROVIDER_HEALTH_DEGRADED_SHOWN, {
+        ...subtitlesViewContext(route, {
+          tvQueryMode: tvQueryModeFromApi,
+          providerHealthTier: providerHealthSnapshot?.tier,
+          actionKind: "provider_health_banner"
+        })
+      });
+    }
+    if (isSubtitleDevDiagnosticsEnabled() && providerErrorsList.length) {
+      status.insertAdjacentHTML(
+        "beforeend",
+        `<div class="hint provider-health-banner__dev" style="margin-top:6px;">${escapeHtml(
+          providerErrorsList.map((e) => `${e.provider}: ${e.message}`).join(" | ")
+        )}</div>`
+      );
     }
 
     document.getElementById("applySubFilters").addEventListener("click", () => apply(true));
@@ -4249,7 +4996,30 @@ async function renderSubtitles(route) {
     document.getElementById("mobileResetFilters")?.addEventListener("click", () => {
       document.getElementById("resetSubFilters")?.click();
     });
-    form.addEventListener("change", () => apply(true));
+    form.addEventListener("change", (ev) => {
+      const tgt = ev.target;
+      if (tgt && tgt.name === "languageFilter") {
+        trackProductEvent(AnalyticsEvent.SUBTITLE_LANGUAGE_FILTER_CHANGED, {
+          ...subtitlesViewContext(route, {
+            tvQueryMode: tvQueryModeFromApi,
+            providerHealthTier: providerHealthSnapshot?.tier,
+            language: form.languageFilter.value,
+            actionKind: "panel_select"
+          })
+        });
+      }
+      if (tgt && tgt.name === "providerFilter") {
+        trackProductEvent(AnalyticsEvent.SUBTITLE_PROVIDER_FILTER_CHANGED, {
+          ...subtitlesViewContext(route, {
+            tvQueryMode: tvQueryModeFromApi,
+            providerHealthTier: providerHealthSnapshot?.tier,
+            provider: form.providerFilter.value,
+            actionKind: "panel_select"
+          })
+        });
+      }
+      apply(true);
+    });
     form.addEventListener("input", () => {
       if ((form.text.value || "").length === 0 || (form.text.value || "").length > 2) apply(true);
     });
@@ -4296,10 +5066,19 @@ async function renderSubtitles(route) {
     updateTvChipCounts();
     syncTvMatchChips();
     apply(true);
-  } catch (err) {
+  } catch {
     subtitleDevDiagnosticsCopySnapshot = null;
     count.textContent = "";
-    status.innerHTML = `<div class="alert alert-error">${escapeHtml(t("subtitlesLoadFailed"))}: ${escapeHtml(err.message)}</div>`;
+    const subErrActions = media
+      ? `<a class="btn" href="${toMediaUrl(media, {
+          year: route.year || media.year || "",
+          lang: route.language,
+          provider: route.provider,
+          season: route.season,
+          episode: route.episode
+        })}" data-link>${escapeHtml(t("backToDetails"))}</a><a class="btn secondary" href="/search" data-link>${escapeHtml(t("backToSearch"))}</a>`
+      : `<a class="btn" href="/search" data-link>${escapeHtml(t("backToSearch"))}</a>`;
+    status.innerHTML = pageStateError(t("subtitlesLoadFailed"), t("errorTryAgainShort"), subErrActions);
     list.innerHTML = "";
     renderSubtitleBestPick(bestPickHost, null);
   }
@@ -4307,9 +5086,9 @@ async function renderSubtitles(route) {
 
 function render404() {
   appEl.innerHTML = `
-    <section class="hero hero-card">
-      <span class="badge">404</span>
-      <h1 class="hero-title">${escapeHtml(t("pageNotFound"))}</h1>
+    <section class="hero hero-card page-not-found" aria-labelledby="page-not-found-title">
+      <span class="badge badge--brand">${escapeHtml(t("errorNotFoundBadge"))}</span>
+      <h1 class="hero-title" id="page-not-found-title">${escapeHtml(t("pageNotFound"))}</h1>
       <p class="hero-subtitle">${escapeHtml(t("pageNotFoundDesc"))}</p>
       <div class="row-actions">
         <a class="btn" href="/" data-link>${escapeHtml(t("navHome"))}</a>
@@ -4321,20 +5100,59 @@ function render404() {
 
 function bindLinkDelegation() {
   document.body.addEventListener("click", (e) => {
+    const recoveryEl = e.target.closest("[data-analytics-recovery]");
+    if (recoveryEl) {
+      const rid = recoveryEl.getAttribute("data-analytics-recovery");
+      trackProductEvent(AnalyticsEvent.NO_RESULTS_RECOVERY_CLICKED, {
+        ...contextFromRoute(parseLocation()),
+        recoveryActionId: rid || "",
+        actionKind: "no_results_recovery"
+      });
+    }
+    const viewSrc = e.target.closest("a[data-analytics-view-source='1']");
+    if (viewSrc) {
+      trackProductEvent(AnalyticsEvent.VIEW_SOURCE_CLICKED, {
+        ...contextFromRoute(parseLocation()),
+        provider: viewSrc.getAttribute("data-provider") || "opensubtitles",
+        sourceArea: "subtitles",
+        actionKind: "open_source_page"
+      });
+    }
+    const osDl = e.target.closest("[data-os-download='1']");
+    if (osDl) {
+      e.preventDefault();
+      void runOpensubtitlesDownloadClick(osDl);
+      return;
+    }
     const downloadLink = e.target.closest("a[data-download='1']");
     if (downloadLink) {
-      trackEvent("subtitle_download_clicked", {
-        provider: downloadLink.getAttribute("data-provider") || "unknown",
-        fromBestPick: downloadLink.hasAttribute("data-best-pick")
+      const fromBest = downloadLink.hasAttribute("data-best-pick");
+      const prov = downloadLink.getAttribute("data-provider") || "unknown";
+      trackProductEvent(AnalyticsEvent.SUBTITLE_DOWNLOAD_CLICKED, {
+        ...contextFromRoute(parseLocation()),
+        provider: prov,
+        fromBestPick: fromBest,
+        sourceArea: "subtitles",
+        actionKind: "direct_download_link"
       });
+      if (fromBest) {
+        trackProductEvent(AnalyticsEvent.SUBTITLE_BEST_PICK_DOWNLOAD_CLICKED, {
+          ...contextFromRoute(parseLocation()),
+          provider: prov,
+          sourceArea: "subtitles",
+          actionKind: "best_pick_download"
+        });
+      }
       return;
     }
     const a = e.target.closest("a[data-link]");
     if (!a) return;
     if (a.hasAttribute("data-search-card")) {
-      trackEvent("search_card_clicked", {
+      trackProductEvent(AnalyticsEvent.SEARCH_RESULT_CLICKED, {
+        ...contextFromRoute(parseLocation()),
         tmdbId: a.getAttribute("data-tmdb-id") || "",
-        mediaType: a.getAttribute("data-media-type") || ""
+        mediaType: a.getAttribute("data-media-type") || "",
+        actionKind: "search_result_card"
       });
     }
     e.preventDefault();

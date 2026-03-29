@@ -14,6 +14,10 @@ const SUBDL_API_KEY = String(process.env.SUBDL_API_KEY || "").trim();
 const OPENSUBTITLES_API_KEY = String(process.env.OPENSUBTITLES_API_KEY || "").trim();
 const OPENSUBTITLES_USERNAME = String(process.env.OPENSUBTITLES_USERNAME || "").trim();
 const OPENSUBTITLES_PASSWORD = String(process.env.OPENSUBTITLES_PASSWORD || "").trim();
+/** Optional second OpenSubtitles account: separate daily /download quota when primary is exhausted. */
+const OPENSUBTITLES_USERNAME_FALLBACK = String(process.env.OPENSUBTITLES_USERNAME_FALLBACK || "").trim();
+const OPENSUBTITLES_PASSWORD_FALLBACK = String(process.env.OPENSUBTITLES_PASSWORD_FALLBACK || "").trim();
+const OPENSUBTITLES_API_KEY_FALLBACK = String(process.env.OPENSUBTITLES_API_KEY_FALLBACK || "").trim();
 const OPENSUBTITLES_USER_AGENT = String(
   process.env.OPENSUBTITLES_USER_AGENT || "SubtitleHub-Netlify/1.0"
 ).trim();
@@ -21,7 +25,7 @@ const APP_NAME = String(process.env.APP_NAME || "Subtitle Hub").trim() || "Subti
 const BOOTED_AT = Date.now();
 
 /** Bump when TV classification / subtitle aggregation changes — included in subtitles cache key (see subtitles.js). */
-export const SUBTITLES_PIPELINE_CACHE_REV = 20;
+export const SUBTITLES_PIPELINE_CACHE_REV = 22;
 export const HOME_FEED_CACHE_REV = 2;
 const SUBDL_SEASON_HTML_LOW_COUNT_THRESHOLD = 20;
 const HOME_FEED_TIME_BUDGET_MS = 25000;
@@ -48,9 +52,8 @@ const TOKEN_TTL_MS = 50 * 60 * 1000;
 const DOWNLOAD_LINK_TTL_MS = 10 * 60 * 1000;
 const OPENSUBTITLES_API = "https://api.opensubtitles.com/api/v1";
 
-let cachedOpenSubToken = "";
-let cachedOpenSubTokenExp = 0;
-let openSubLoginPromise = null;
+const openSubPrimaryAuth = { token: "", exp: 0, loginPromise: null };
+const openSubFallbackAuth = { token: "", exp: 0, loginPromise: null };
 const openSubDownloadCache = new Map();
 let homeFeedBuildPromise = null;
 
@@ -158,6 +161,11 @@ export function getHealth() {
     tmdbConfigured: Boolean(TMDB_BEARER_TOKEN),
     subdlConfigured: Boolean(SUBDL_API_KEY),
     opensubtitlesConfigured: Boolean(OPENSUBTITLES_API_KEY),
+    opensubtitlesFallbackConfigured: Boolean(
+      OPENSUBTITLES_USERNAME_FALLBACK &&
+        OPENSUBTITLES_PASSWORD_FALLBACK &&
+        (OPENSUBTITLES_API_KEY_FALLBACK || OPENSUBTITLES_API_KEY)
+    ),
     ready: Boolean(TMDB_BEARER_TOKEN) && Boolean(SUBDL_API_KEY || OPENSUBTITLES_API_KEY),
     uptimeSec: Math.round((Date.now() - BOOTED_AT) / 1000),
     features: {
@@ -1374,14 +1382,65 @@ function mapSubdl(payload, defaultLang) {
     .filter((sub) => sub.downloadUrl);
 }
 
-function openSubHeaders(token = "") {
+function openSubHeaders(token = "", apiKey = "") {
+  const key = String(apiKey || "").trim() || OPENSUBTITLES_API_KEY;
   const h = {
-    "Api-Key": OPENSUBTITLES_API_KEY,
+    "Api-Key": key,
     "User-Agent": OPENSUBTITLES_USER_AGENT,
     Accept: "application/json"
   };
   if (token) h.Authorization = `Bearer ${token}`;
   return h;
+}
+
+function hasOpenSubtitlesFallbackCredentials() {
+  return Boolean(
+    OPENSUBTITLES_USERNAME_FALLBACK &&
+      OPENSUBTITLES_PASSWORD_FALLBACK &&
+      (OPENSUBTITLES_API_KEY_FALLBACK || OPENSUBTITLES_API_KEY)
+  );
+}
+
+function openSubtitlesApiKeyForIdentity(identity) {
+  return identity === "fallback"
+    ? OPENSUBTITLES_API_KEY_FALLBACK || OPENSUBTITLES_API_KEY
+    : OPENSUBTITLES_API_KEY;
+}
+
+function openSubAuthSlot(identity) {
+  return identity === "fallback" ? openSubFallbackAuth : openSubPrimaryAuth;
+}
+
+/** OpenSubtitles website subtitle detail URLs are not direct file downloads (often show "removed"). */
+function isOpenSubtitlesSubtitleListingPageUrl(url = "") {
+  const u = String(url || "").trim();
+  if (!u) return false;
+  let host = "";
+  let pathname = "";
+  try {
+    const p = new URL(u);
+    host = p.hostname.replace(/^www\./i, "").toLowerCase();
+    pathname = p.pathname || "";
+  } catch {
+    return false;
+  }
+  if (!host.endsWith("opensubtitles.com") && !host.endsWith("opensubtitles.org")) return false;
+  if (host.startsWith("dl.")) return false;
+  return /\/subtitles\//i.test(pathname);
+}
+
+function sanitizeOpenSubtitlesDirectDownloadUrl(candidate = "") {
+  const u = String(candidate || "").trim();
+  if (!u) return "";
+  if (!/^https?:\/\//i.test(u)) return "";
+  if (isOpenSubtitlesSubtitleListingPageUrl(u)) return "";
+  return u;
+}
+
+function opensubtitlesSourcePageUrlFromItem(item) {
+  const sid = String(item?.id ?? "").trim();
+  if (!sid) return "";
+  return `https://www.opensubtitles.com/en/subtitles/${encodeURIComponent(sid)}`;
 }
 
 async function openSubFetch(path, options = {}) {
@@ -1398,36 +1457,75 @@ async function openSubFetch(path, options = {}) {
   return payload;
 }
 
-async function getOpenSubToken() {
-  const now = Date.now();
-  if (cachedOpenSubToken && cachedOpenSubTokenExp > now) return cachedOpenSubToken;
-  if (!OPENSUBTITLES_USERNAME || !OPENSUBTITLES_PASSWORD) return "";
-  if (openSubLoginPromise) return openSubLoginPromise;
+/**
+ * Distinguish daily quota / rate limits from removed or broken subtitles (lazy-resolve UX).
+ * Returns API-facing `code` for the client: quota_exhausted | rate_limited | unavailable
+ */
+export function classifyOpenSubtitlesResolveFailure(message = "") {
+  const m = String(message || "").toLowerCase();
 
-  openSubLoginPromise = (async () => {
+  if (
+    (m.includes("subtitle") && (m.includes("24h") || m.includes("24 h") || m.includes("24 hours"))) ||
+    (m.includes("allowed") && m.includes("subtitle")) ||
+    (/\b100\b/.test(m) && m.includes("subtitle")) ||
+    (/\bdaily\b/.test(m) && (m.includes("limit") || m.includes("quota") || m.includes("download"))) ||
+    m.includes("quota exhausted") ||
+    m.includes("exceeded your") ||
+    m.includes("download quota") ||
+    (m.includes("maximum") && m.includes("download") && m.includes("reached"))
+  ) {
+    return "quota_exhausted";
+  }
+
+  if (
+    /\b429\b/.test(m) ||
+    m.includes("too many requests") ||
+    m.includes("rate limit") ||
+    m.includes("slow down")
+  ) {
+    return "rate_limited";
+  }
+
+  return "unavailable";
+}
+
+async function getOpenSubTokenForIdentity(identity = "primary") {
+  const isFb = identity === "fallback";
+  const username = isFb ? OPENSUBTITLES_USERNAME_FALLBACK : OPENSUBTITLES_USERNAME;
+  const password = isFb ? OPENSUBTITLES_PASSWORD_FALLBACK : OPENSUBTITLES_PASSWORD;
+  const apiKey = openSubtitlesApiKeyForIdentity(isFb ? "fallback" : "primary");
+  if (!username || !password || !apiKey) return "";
+
+  const slot = openSubAuthSlot(identity);
+  const now = Date.now();
+  if (slot.token && slot.exp > now) return slot.token;
+  if (slot.loginPromise) return slot.loginPromise;
+
+  slot.loginPromise = (async () => {
     const payload = await openSubFetch("/login", {
       method: "POST",
       headers: {
-        ...openSubHeaders(),
+        ...openSubHeaders("", apiKey),
         "Content-Type": "application/json"
       },
-      body: JSON.stringify({
-        username: OPENSUBTITLES_USERNAME,
-        password: OPENSUBTITLES_PASSWORD
-      })
+      body: JSON.stringify({ username, password })
     });
     const token = String(payload?.token || "").trim();
     if (!token) throw new Error("OpenSubtitles login did not return token");
-    cachedOpenSubToken = token;
-    cachedOpenSubTokenExp = Date.now() + TOKEN_TTL_MS;
+    slot.token = token;
+    slot.exp = Date.now() + TOKEN_TTL_MS;
     return token;
   })();
 
   try {
-    return await openSubLoginPromise;
+    return await slot.loginPromise;
   } finally {
-    openSubLoginPromise = null;
+    slot.loginPromise = null;
   }
+}
+
+async function getOpenSubToken() {
+  return getOpenSubTokenForIdentity("primary");
 }
 
 function openSubFileId(item) {
@@ -1436,21 +1534,192 @@ function openSubFileId(item) {
   return String(files[0]?.file_id || "");
 }
 
-async function openSubDownload(fileId, token) {
+function openSubDownloadCacheKey(fileId, cacheSlot = "primary") {
+  return `${String(fileId || "").trim()}:${cacheSlot === "fallback" ? "fallback" : "primary"}`;
+}
+
+async function openSubDownload(fileId, token, opts = {}) {
   if (!fileId) return "";
-  const cached = openSubDownloadCache.get(fileId);
-  if (cached && cached.exp > Date.now()) return cached.link;
+  const bypassCache = Boolean(opts.bypassCache);
+  const apiKey = opts.apiKey || OPENSUBTITLES_API_KEY;
+  const cacheSlot = opts.cacheSlot === "fallback" ? "fallback" : "primary";
+  const ck = openSubDownloadCacheKey(fileId, cacheSlot);
+  if (!bypassCache) {
+    const cached = openSubDownloadCache.get(ck);
+    if (cached && cached.exp > Date.now()) {
+      const fromCache = sanitizeOpenSubtitlesDirectDownloadUrl(cached.link);
+      if (fromCache) return fromCache;
+    }
+  }
   const payload = await openSubFetch("/download", {
     method: "POST",
     headers: {
-      ...openSubHeaders(token),
+      ...openSubHeaders(token, apiKey),
       "Content-Type": "application/json"
     },
     body: JSON.stringify({ file_id: Number(fileId) })
   });
   const link = String(payload?.link || "").trim();
-  if (link) openSubDownloadCache.set(fileId, { link, exp: Date.now() + DOWNLOAD_LINK_TTL_MS });
-  return link;
+  const sanitized = sanitizeOpenSubtitlesDirectDownloadUrl(link);
+  if (sanitized) {
+    openSubDownloadCache.set(ck, { link: sanitized, exp: Date.now() + DOWNLOAD_LINK_TTL_MS });
+  }
+  return sanitized;
+}
+
+/**
+ * Try primary OpenSubtitles identity for /download; on quota/rate-limit errors retry with optional fallback account.
+ */
+async function openSubDownloadWithFallbackOnQuota(fileId, primaryToken, opts = {}) {
+  if (!fileId) return "";
+  const primaryKey = OPENSUBTITLES_API_KEY;
+  try {
+    return await openSubDownload(fileId, primaryToken, {
+      ...opts,
+      apiKey: primaryKey,
+      cacheSlot: "primary"
+    });
+  } catch (err) {
+    const code = classifyOpenSubtitlesResolveFailure(String(err?.message || ""));
+    if (
+      (code === "quota_exhausted" || code === "rate_limited") &&
+      hasOpenSubtitlesFallbackCredentials()
+    ) {
+      let fbToken = "";
+      try {
+        fbToken = await getOpenSubTokenForIdentity("fallback");
+      } catch {
+        fbToken = "";
+      }
+      const fbKey = OPENSUBTITLES_API_KEY_FALLBACK || OPENSUBTITLES_API_KEY;
+      return await openSubDownload(fileId, fbToken, {
+        ...opts,
+        apiKey: fbKey,
+        cacheSlot: "fallback"
+      });
+    }
+    throw err;
+  }
+}
+
+/**
+ * Fresh resolve for client download clicks (bypasses short-lived download link cache).
+ * Returns diagnostic fields required by the UI contract.
+ */
+export async function resolveOpenSubtitlesDownloadClick(fileIdRaw) {
+  const base = {
+    ok: false,
+    opensubtitlesLinkKind: "source_page_only",
+    opensubtitlesSourcePageUrl: "",
+    opensubtitlesResolvedDownloadUrl: "",
+    opensubtitlesResolveOnClickUsed: true,
+    opensubtitlesResolveFailureReason: ""
+  };
+  const idCheck = normalizePositiveInt(String(fileIdRaw || "").trim(), {
+    min: 1,
+    max: Number.MAX_SAFE_INTEGER,
+    name: "fileId"
+  });
+  if (!idCheck.ok || !idCheck.value) {
+    return {
+      ...base,
+      opensubtitlesResolveFailureReason: idCheck.error || "invalid_file_id",
+      code: "invalid_file_id"
+    };
+  }
+  const fileId = idCheck.value;
+  if (!OPENSUBTITLES_API_KEY) {
+    return {
+      ...base,
+      opensubtitlesResolveFailureReason: "opensubtitles_not_configured",
+      code: "not_configured"
+    };
+  }
+  let token = "";
+  try {
+    token = await getOpenSubTokenForIdentity("primary");
+  } catch {
+    token = "";
+  }
+  try {
+    const link = await openSubDownload(fileId, token, {
+      bypassCache: true,
+      apiKey: OPENSUBTITLES_API_KEY,
+      cacheSlot: "primary"
+    });
+    if (link) {
+      return {
+        ok: true,
+        opensubtitlesLinkKind: "direct",
+        opensubtitlesSourcePageUrl: "",
+        opensubtitlesResolvedDownloadUrl: link,
+        opensubtitlesResolveOnClickUsed: true,
+        opensubtitlesResolveFailureReason: "",
+        opensubtitlesResolveUsedFallback: false,
+        downloadUrl: link,
+        code: "ok"
+      };
+    }
+    return {
+      ...base,
+      opensubtitlesResolveFailureReason: "empty_or_non_direct_link_from_api",
+      code: "unavailable"
+    };
+  } catch (err) {
+    const reason = String(err?.message || "download_resolve_failed").slice(0, 400);
+    const code = classifyOpenSubtitlesResolveFailure(reason);
+    if (
+      (code === "quota_exhausted" || code === "rate_limited") &&
+      hasOpenSubtitlesFallbackCredentials()
+    ) {
+      let fbToken = "";
+      try {
+        fbToken = await getOpenSubTokenForIdentity("fallback");
+      } catch {
+        fbToken = "";
+      }
+      try {
+        const linkFb = await openSubDownload(fileId, fbToken, {
+          bypassCache: true,
+          apiKey: OPENSUBTITLES_API_KEY_FALLBACK || OPENSUBTITLES_API_KEY,
+          cacheSlot: "fallback"
+        });
+        if (linkFb) {
+          return {
+            ok: true,
+            opensubtitlesLinkKind: "direct",
+            opensubtitlesSourcePageUrl: "",
+            opensubtitlesResolvedDownloadUrl: linkFb,
+            opensubtitlesResolveOnClickUsed: true,
+            opensubtitlesResolveFailureReason: "",
+            opensubtitlesResolveUsedFallback: true,
+            downloadUrl: linkFb,
+            code: "ok"
+          };
+        }
+      } catch (err2) {
+        const reason2 = String(err2?.message || "download_resolve_failed").slice(0, 400);
+        return {
+          ...base,
+          opensubtitlesResolveFailureReason: reason2,
+          code: classifyOpenSubtitlesResolveFailure(reason2),
+          opensubtitlesPrimaryResolveFailureReason: reason
+        };
+      }
+      return {
+        ...base,
+        opensubtitlesResolveFailureReason: reason,
+        code,
+        opensubtitlesFallbackAttempted: true,
+        opensubtitlesFallbackFailureReason: "empty_or_non_direct_link_from_api"
+      };
+    }
+    return {
+      ...base,
+      opensubtitlesResolveFailureReason: reason,
+      code
+    };
+  }
 }
 
 async function withTimeout(promise, timeoutMs, label = "operation") {
@@ -1462,20 +1731,33 @@ async function withTimeout(promise, timeoutMs, label = "operation") {
   ]);
 }
 
-function mapOpenSub(item, link, fallbackLang) {
+function mapOpenSub(item, resolvedDirectLink, fallbackLang, meta = {}) {
   const a = item?.attributes || {};
   const releaseName = a.release || a.feature_details?.title || a.files?.[0]?.file_name || "Subtitle";
   const releases = Array.isArray(a.files) ? a.files.map((f) => f?.file_name).filter(Boolean) : [];
   const feature = a.feature_details || {};
+  const fileId = openSubFileId(item);
+  const sourcePageUrl = opensubtitlesSourcePageUrlFromItem(item);
+  const direct = sanitizeOpenSubtitlesDirectDownloadUrl(String(resolvedDirectLink || "").trim());
+  const downloadUrl = direct;
+  let opensubtitlesLinkKind = "none";
+  if (downloadUrl) opensubtitlesLinkKind = "direct";
+  else if (sourcePageUrl) opensubtitlesLinkKind = "source_page_only";
   return {
     provider: "opensubtitles",
-    id: String(item?.id || openSubFileId(item) || releaseName),
+    id: String(item?.id || fileId || releaseName),
     language: String(a.language || fallbackLang || "").toUpperCase(),
     releaseName,
     author: a.uploader?.name || "",
     hearingImpaired: Boolean(a.hearing_impaired),
     downloads: Number(a.download_count || 0),
-    downloadUrl: link,
+    downloadUrl,
+    opensubtitlesFileId: fileId,
+    opensubtitlesSourcePageUrl: sourcePageUrl,
+    opensubtitlesLinkKind,
+    opensubtitlesResolvedDownloadUrl: downloadUrl,
+    opensubtitlesResolveOnClickUsed: false,
+    opensubtitlesResolveFailureReason: String(meta.initialResolveFailureReason || "").slice(0, 400),
     comment: a.comments || "",
     season: feature?.season_number || "",
     episode: feature?.episode_number || "",
@@ -1922,24 +2204,44 @@ async function searchOpenSubtitles({
     const out = [];
     for (let i = 0; i < list.length; i += 1) {
       const item = list[i];
-      const fallback = `https://www.opensubtitles.com/en/subtitles/${encodeURIComponent(String(item?.id || ""))}`;
       const shouldResolve = Boolean(resolveDownloads) && i < resolveLimit;
       if (!shouldResolve) {
-        out.push(mapOpenSub(item, fallback, language));
+        const skipReason = !resolveDownloads ? "resolve_disabled_for_request" : "beyond_resolve_budget";
+        out.push(
+          mapOpenSub(item, "", language, {
+            initialResolveFailureReason: skipReason
+          })
+        );
         continue;
       }
       try {
         const link = await withTimeout(
-          openSubDownload(openSubFileId(item), token),
+          openSubDownloadWithFallbackOnQuota(openSubFileId(item), token),
           resolveTimeoutMs,
           "opensubtitles.downloadResolve"
         );
-        out.push(mapOpenSub(item, link || fallback, language));
+        const trimmed = String(link || "").trim();
+        const direct = sanitizeOpenSubtitlesDirectDownloadUrl(trimmed);
+        let failureReason = "";
+        if (!direct) {
+          if (trimmed && isOpenSubtitlesSubtitleListingPageUrl(trimmed)) {
+            failureReason = "api_returned_subtitle_page_not_file";
+          } else if (!openSubFileId(item)) {
+            failureReason = "missing_file_id";
+          } else {
+            failureReason = "empty_or_non_direct_link_from_api";
+          }
+        }
+        out.push(mapOpenSub(item, direct, language, { initialResolveFailureReason: failureReason }));
       } catch (err) {
-        out.push(mapOpenSub(item, fallback, language));
+        out.push(
+          mapOpenSub(item, "", language, {
+            initialResolveFailureReason: String(err?.message || "download_resolve_failed").slice(0, 400)
+          })
+        );
         logError("OpenSubtitles item download resolve failed", err, {
           itemId: item?.id,
-          usedFallbackUrl: true
+          usedFallbackUrl: false
         });
       }
     }
@@ -2020,18 +2322,22 @@ function dedupeSubtitles(items) {
   for (const item of items) {
     const provider = String(item.provider || "");
     const stableId = String(item.id || "").trim();
+    const osFile = String(item.opensubtitlesFileId || "").trim();
     const urlKey = String(item.downloadUrl || "")
       .slice(0, 120)
       .toLowerCase();
+    const disambig =
+      provider === "opensubtitles" && !urlKey && osFile ? `fid:${osFile}` : urlKey.slice(0, 48);
     const key = stableId
-      ? `${provider}|${stableId}|${urlKey.slice(0, 48)}`
+      ? `${provider}|${stableId}|${disambig}`
       : [
           provider,
           String(item.language || "").toLowerCase(),
           String(item.releaseName || "").toLowerCase(),
           String(item.season || ""),
           String(item.episode || ""),
-          urlKey
+          urlKey,
+          osFile
         ].join("|");
     if (seen.has(key)) continue;
     seen.add(key);
@@ -2228,7 +2534,7 @@ function subdlFallbackProbeContradictionReason(parsed, metaS, metaE, ctxS, ctxE)
  *   seasonScoped includes generic season rows and same-season episode rows.
  * Every path sets `classifyBranch` for diagnostics (`diagnostics=1` → subdlClassifySamples).
  */
-function classifyTvSubtitleMatch(item, ctx) {
+export function classifyTvSubtitleMatch(item, ctx) {
   if (ctx.mediaType !== "tv") return tvClassifyResult("movie", 0, "notTv");
 
   const ctxS = parseOptionalEpisodeNumber(ctx.season);
@@ -2546,6 +2852,89 @@ function summarizeSubtitlePipeline(sortCtx, sorted, finalList, debugCounts) {
     afterTvModeFilter: fold(finalList),
     droppedForTvMode: sorted.length - finalList.length,
     tvEpisodeSubdlAnalysis: debugCounts.tvEpisodeSubdlAnalysis || null
+  };
+}
+
+function classifyProviderFailureKind(message) {
+  const m = String(message || "").toLowerCase();
+  if (/\b429\b/.test(m) || m.includes("rate limit") || m.includes("too many requests") || m.includes("quota exceeded")) {
+    return "limit";
+  }
+  if (m.includes("not configured") || m.includes("api_key")) return "config";
+  return "generic";
+}
+
+/**
+ * Product-facing provider coverage (no raw errors). Used by the subtitles API in normal mode.
+ */
+export function buildProviderHealthSummary({
+  providerFilter,
+  requested,
+  providerErrors,
+  finalSubtitles,
+  alternateSubtitles,
+  debugCounts
+}) {
+  const req = Array.isArray(requested) ? requested.map((p) => String(p || "").toLowerCase()).filter(Boolean) : [];
+  const failedSet = new Set();
+  const failureKinds = {};
+  for (const e of providerErrors || []) {
+    const id = String(e.provider || "").toLowerCase();
+    if (!id) continue;
+    failedSet.add(id);
+    if (!failureKinds[id]) failureKinds[id] = classifyProviderFailureKind(e.message);
+  }
+  const failed = [...failedSet];
+  const succeeded = req.filter((p) => !failedSet.has(p));
+  const inResults = new Set();
+  for (const s of finalSubtitles || []) {
+    const p = String(s.provider || "").toLowerCase();
+    if (p) inResults.add(p);
+  }
+  const providersWithData = [...inResults];
+  const anyRateLimited = Object.values(failureKinds).some((k) => k === "limit");
+  const htmlFallback =
+    Boolean(debugCounts?.subdlHtmlFallbackUsed) || Boolean(debugCounts?.episodeHtmlFallbackUsed);
+  const alternateRouteOffered = Array.isArray(alternateSubtitles) && alternateSubtitles.length > 0;
+
+  const wantBoth = req.length >= 2;
+  let tier = "full";
+
+  if (providerFilter !== "all") {
+    if (failed.length >= req.length) tier = "unavailable";
+    else if (succeeded.length) tier = "focused";
+    else tier = "unavailable";
+  } else if (wantBoth) {
+    if (failed.length === 0) {
+      if ((finalSubtitles || []).length === 0) {
+        tier = "no_matches_upstream";
+      } else if (providersWithData.length >= 2) {
+        if ((finalSubtitles || []).length <= 4) tier = "sparse";
+        else tier = "full";
+      } else {
+        tier = "partial_catalog";
+      }
+    } else if (failed.length === 1) {
+      tier = (finalSubtitles || []).length ? "partial_outage" : "partial_outage_empty";
+    } else {
+      tier = "unavailable";
+    }
+  } else if (!succeeded.length) {
+    tier = "unavailable";
+  } else if (!(finalSubtitles || []).length) {
+    tier = "no_matches_upstream";
+  }
+
+  return {
+    tier,
+    requestedProviders: req,
+    failedProviders: failed,
+    succeededProviders: succeeded,
+    providersWithData,
+    failureKinds,
+    anyRateLimited,
+    fallbackAssisted: htmlFallback,
+    alternateRouteOffered
   };
 }
 
@@ -4182,6 +4571,14 @@ export async function aggregateSubtitles({
   }
 
   const diagnostics = summarizeSubtitlePipeline(sortCtx, sorted, finalList, debugCounts);
+  const providerHealth = buildProviderHealthSummary({
+    providerFilter,
+    requested,
+    providerErrors,
+    finalSubtitles: finalList,
+    alternateSubtitles,
+    debugCounts
+  });
 
   return {
     provider: providerFilter,
@@ -4190,6 +4587,7 @@ export async function aggregateSubtitles({
     alternateSubtitles: stripOpenSubInternalFields(stripSubdlProbeFromRows(alternateSubtitles)),
     debugCounts,
     diagnostics,
+    providerHealth,
     allFailed: requested.length > 0 && successCount === 0
   };
 }

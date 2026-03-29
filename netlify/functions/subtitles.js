@@ -186,6 +186,7 @@ export async function handler(event) {
       providerErrors: agg.providerErrors,
       subtitles: agg.subtitles,
       alternateSubtitles: Array.isArray(agg.alternateSubtitles) ? agg.alternateSubtitles : [],
+      providerHealth: agg.providerHealth || null,
       ...(debug ? { debugCounts: agg.debugCounts } : {}),
       ...(diagnosticsFlag ? { diagnostics: agg.diagnostics } : {})
     });

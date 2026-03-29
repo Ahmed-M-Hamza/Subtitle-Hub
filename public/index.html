@@ -18,8 +18,16 @@
     <meta property="og:type" content="website" />
     <meta property="og:locale" content="ar_AR" />
     <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Subtitle Hub" />
+    <meta
+      name="twitter:description"
+      content="اكتشف الترجمات بسرعة مع تجربة حديثة ومنظمة للأفلام والمسلسلات."
+    />
+    <meta name="apple-mobile-web-app-title" content="Subtitle Hub" />
+    <meta name="application-name" content="Subtitle Hub" />
     <title>Subtitle Hub | بحث ترجمات أفلام ومسلسلات</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="apple-touch-icon" href="/favicon.svg" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -27,12 +35,47 @@
       rel="stylesheet"
     />
     <link rel="stylesheet" href="/css/app.css" />
+    <script>
+      (function () {
+        var K = "subtitlehub.uiLang";
+        var isAr = true;
+        try {
+          if (localStorage.getItem(K) === "en") isAr = false;
+        } catch (e) {}
+        var r = document.documentElement;
+        r.lang = isAr ? "ar" : "en";
+        r.dir = isAr ? "rtl" : "ltr";
+      })();
+    </script>
+    <script>
+      (function () {
+        var img = location.origin + "/og-image.png";
+        function ensure(attr, key, val) {
+          var el = document.querySelector("meta[" + attr + '="' + key + '"]');
+          if (!el) {
+            el = document.createElement("meta");
+            el.setAttribute(attr, key);
+            document.head.appendChild(el);
+          }
+          el.setAttribute("content", val);
+        }
+        ensure("property", "og:image", img);
+        ensure("name", "twitter:image", img);
+        ensure("property", "og:image:width", "1200");
+        ensure("property", "og:image:height", "630");
+      })();
+    </script>
   </head>
   <body>
     <div class="container">
       <header class="site-header">
-        <a class="brand" href="/">Subtitle Hub</a>
-        <form id="globalSearchForm" class="global-search" role="search" aria-label="بحث سريع">
+        <a class="brand" href="/" id="siteBrand" aria-label="Subtitle Hub — الصفحة الرئيسية">
+          <span class="brand__text-wrap">
+            <span class="brand__name">Subtitle Hub</span>
+            <span class="brand__tagline" id="brandTagline" aria-hidden="true"></span>
+          </span>
+        </a>
+        <form id="globalSearchForm" class="global-search" role="search" aria-label="بحث سريع في الموقع">
           <input
             id="globalSearchInput"
             type="search"
@@ -42,7 +85,7 @@
           <button type="submit">بحث</button>
         </form>
         <div class="header-controls">
-          <div class="header-control-group" id="langSwitcher" role="group" aria-label="Language switcher">
+          <div class="header-control-group" id="langSwitcher" role="group" aria-label="اختيار اللغة">
             <button type="button" class="header-toggle" data-lang="ar">العربية</button>
             <button type="button" class="header-toggle" data-lang="en">English</button>
           </div>
@@ -54,6 +97,85 @@
           <a href="/api/health" target="_blank" rel="noopener">الحالة</a>
         </nav>
       </header>
+      <!-- Shell copy: keep in sync with UI_TEXT in app.js (same keys as head bootstrap + metaTitleHome, metaDescriptionDefault, og:*). -->
+      <script>
+        (function () {
+          var isAr = document.documentElement.lang === "ar";
+          var T = isAr
+            ? {
+                title: "Subtitle Hub | اكتشف ترجمات الأفلام والمسلسلات",
+                desc: "اكتشف الترجمات بسرعة بتجربة حديثة ومرتبة.",
+                ogTitle: "Subtitle Hub | اكتشف ترجمات الأفلام والمسلسلات",
+                ogDesc: "اكتشف الترجمات بسرعة بتجربة حديثة ومرتبة.",
+                searchPh: "ابحث عن فيلم أو مسلسل...",
+                searchBtn: "بحث",
+                formAria: "بحث سريع في الموقع",
+                navAria: "التنقل الرئيسي",
+                langSwAria: "اختيار اللغة",
+                navHome: "الرئيسية",
+                navSearch: "البحث",
+                navHealth: "الحالة",
+                brandTagline: "بحث ترجمات أوضح",
+                brandAria: "Subtitle Hub — الصفحة الرئيسية"
+              }
+            : {
+                title: "Subtitle Hub | Discover movie and TV subtitles",
+                desc: "Discover subtitles fast with a modern curated experience.",
+                ogTitle: "Subtitle Hub | Discover movie and TV subtitles",
+                ogDesc: "Discover subtitles fast with a modern curated experience.",
+                searchPh: "Search for a movie or TV show...",
+                searchBtn: "Search",
+                formAria: "Site search",
+                navAria: "Main navigation",
+                langSwAria: "Language",
+                navHome: "Home",
+                navSearch: "Search",
+                navHealth: "Health",
+                brandTagline: "Clearer subtitle search",
+                brandAria: "Subtitle Hub — Home"
+              };
+          var body = document.body;
+          if (body) {
+            body.setAttribute("dir", isAr ? "rtl" : "ltr");
+            body.classList.toggle("lang-en", !isAr);
+          }
+          document.title = T.title;
+          var setMeta = function (sel, attr, val) {
+            var n = document.querySelector(sel);
+            if (n) n.setAttribute(attr, val);
+          };
+          setMeta('meta[name="description"]', "content", T.desc);
+          setMeta('meta[property="og:title"]', "content", T.ogTitle);
+          setMeta('meta[property="og:description"]', "content", T.ogDesc);
+          setMeta('meta[property="og:locale"]', "content", isAr ? "ar_AR" : "en_US");
+          setMeta('meta[property="og:url"]', "content", window.location.origin + "/");
+          setMeta('meta[property="og:image"]', "content", window.location.origin + "/og-image.png");
+          setMeta('meta[property="og:image:alt"]', "content", "Subtitle Hub");
+          setMeta('meta[name="twitter:title"]', "content", T.ogTitle);
+          setMeta('meta[name="twitter:description"]', "content", T.ogDesc);
+          setMeta('meta[name="twitter:image"]', "content", window.location.origin + "/og-image.png");
+          var bt = document.getElementById("brandTagline");
+          if (bt) bt.textContent = T.brandTagline || "";
+          var sb = document.getElementById("siteBrand");
+          if (sb && T.brandAria) sb.setAttribute("aria-label", T.brandAria);
+          var form = document.getElementById("globalSearchForm");
+          if (form) form.setAttribute("aria-label", T.formAria);
+          var input = document.getElementById("globalSearchInput");
+          if (input) input.setAttribute("placeholder", T.searchPh);
+          var btn = form && form.querySelector("button[type='submit']");
+          if (btn) btn.textContent = T.searchBtn;
+          var nav = document.querySelector(".nav-links");
+          if (nav) nav.setAttribute("aria-label", T.navAria);
+          var sw = document.getElementById("langSwitcher");
+          if (sw) sw.setAttribute("aria-label", T.langSwAria);
+          var nh = document.querySelector('[data-nav="home"]');
+          if (nh) nh.textContent = T.navHome;
+          var ns = document.querySelector('[data-nav="search"]');
+          if (ns) ns.textContent = T.navSearch;
+          var hl = document.querySelector('.nav-links a[href="/api/health"]');
+          if (hl) hl.textContent = T.navHealth;
+        })();
+      </script>
 
       <main id="app"></main>
     </div>

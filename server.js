@@ -230,7 +230,8 @@ app.get("/api/subtitles", async (req, res, next) => {
       ok: true,
       provider: agg.providerFilter,
       providerErrors: agg.providerErrors,
-      subtitles: agg.subtitles
+      subtitles: agg.subtitles,
+      providerHealth: agg.providerHealth || null
     });
   } catch (error) {
     next(error);

@@ -10,12 +10,21 @@
   "scripts": {
     "dev": "npx netlify dev",
     "start": "echo \"Production deploy does not use npm start. Use npm run dev locally.\"",
-    "build": "echo \"No build step required (static public + Netlify Functions).\"",
+    "build": "node scripts/generate-launch-seo.mjs",
     "serve:static": "npx serve public",
+    "test": "node --test tests/*.test.mjs",
+    "regression": "npm test && npm run smoke",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui",
     "smoke": "node tests/smoke.mjs",
-    "smoke:local": "BASE_URL=http://localhost:8888 node tests/smoke.mjs"
+    "smoke:local": "BASE_URL=http://localhost:8888 node tests/smoke.mjs",
+    "smoke:diag": "SMOKE_DIAGNOSTICS=1 node tests/smoke.mjs"
   },
   "dependencies": {
     "dotenv": "^17.3.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.49.1",
+    "serve": "^14.2.6"
   }
 }
