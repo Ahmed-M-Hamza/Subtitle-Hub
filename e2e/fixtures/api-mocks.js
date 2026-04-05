@@ -134,8 +134,17 @@ const openSubtitlesResolveQuotaJson = {
 /**
  * Intercept Netlify function calls when using `serve public` (functions 404 otherwise).
  * `openSubtitlesResolveMode`: "failure" → unavailable-style 422; "quota" → quota_exhausted 422 (toast copy).
+ * `openSubtitlesResolveSuccessOverrides`: shallow-merge into the success JSON (e.g. custom `downloadUrl` for blob e2e).
  */
-export async function installApiMocks(page, { mediaDetails = mediaMovie, subtitlesResponse, openSubtitlesResolveMode = "success" } = {}) {
+export async function installApiMocks(
+  page,
+  {
+    mediaDetails = mediaMovie,
+    subtitlesResponse,
+    openSubtitlesResolveMode = "success",
+    openSubtitlesResolveSuccessOverrides = null
+  } = {}
+) {
   await page.route("**/.netlify/functions/media-details**", async (route) => {
     await route.fulfill({
       status: 200,
@@ -172,10 +181,14 @@ export async function installApiMocks(page, { mediaDetails = mediaMovie, subtitl
       });
       return;
     }
+    const successPayload =
+      openSubtitlesResolveSuccessOverrides != null
+        ? { ...openSubtitlesResolveSuccessJson, ...openSubtitlesResolveSuccessOverrides }
+        : openSubtitlesResolveSuccessJson;
     await route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify(openSubtitlesResolveSuccessJson)
+      body: JSON.stringify(successPayload)
     });
   });
 

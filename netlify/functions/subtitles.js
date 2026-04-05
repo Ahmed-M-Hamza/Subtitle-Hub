@@ -129,6 +129,7 @@ export async function handler(event) {
       }
     }
 
+    const wantPipelineDiagnostics = diagnosticsFlag || debug;
     const agg = await getOrSetCache(
       "subtitles",
       cacheKey([
@@ -140,7 +141,7 @@ export async function handler(event) {
         year,
         provider,
         fileName,
-        diagnosticsFlag ? "diag1" : "diag0",
+        wantPipelineDiagnostics ? "diag" : "nodiag",
         `rev${SUBTITLES_PIPELINE_CACHE_REV}`
       ]),
       5 * 60 * 1000,
@@ -155,7 +156,7 @@ export async function handler(event) {
           provider,
           fileName,
           tvQueryMode,
-          includeClassificationTrace: diagnosticsFlag
+          includeDiagnostics: wantPipelineDiagnostics
         })
     );
 

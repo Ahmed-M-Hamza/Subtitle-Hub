@@ -25,7 +25,7 @@ const APP_NAME = String(process.env.APP_NAME || "Subtitle Hub").trim() || "Subti
 const BOOTED_AT = Date.now();
 
 /** Bump when TV classification / subtitle aggregation changes — included in subtitles cache key (see subtitles.js). */
-export const SUBTITLES_PIPELINE_CACHE_REV = 23;
+export const SUBTITLES_PIPELINE_CACHE_REV = 24;
 export const HOME_FEED_CACHE_REV = 3;
 const SUBDL_SEASON_HTML_LOW_COUNT_THRESHOLD = 20;
 const HOME_FEED_TIME_BUDGET_MS = 25000;
@@ -159,6 +159,18 @@ export function normalizeProviderFilter(raw) {
 }
 
 export function getHealth() {
+  const build = {
+    subtitlePipelineCacheRev: SUBTITLES_PIPELINE_CACHE_REV,
+    homeFeedCacheRev: HOME_FEED_CACHE_REV
+  };
+  for (const [key, envVar] of [
+    ["commitRef", "COMMIT_REF"],
+    ["deployId", "DEPLOY_ID"],
+    ["deployContext", "CONTEXT"]
+  ]) {
+    const v = String(process.env[envVar] || "").trim();
+    if (v) build[key] = v.length > 120 ? v.slice(0, 120) : v;
+  }
   return {
     ok: true,
     app: APP_NAME,
@@ -177,6 +189,7 @@ export function getHealth() {
       ranking: true,
       tvmazeEnrichment: true
     },
+    build,
     timestamp: new Date().toISOString()
   };
 }
@@ -2751,7 +2764,7 @@ function subdlFallbackProbeContradictionReason(parsed, metaS, metaE, ctxS, ctxE)
  * - episode mode (season + episode): main list = exactEpisode only.
  * - season mode (season only): main list = seasonPack + seasonScoped.
  *   seasonScoped includes generic season rows and same-season episode rows.
- * Every path sets `classifyBranch` for diagnostics (`diagnostics=1` → subdlClassifySamples).
+ * `subdlClassifySamples` in diagnostics is filled separately so ranking never depends on trace.
  */
 export function classifyTvSubtitleMatch(item, ctx) {
   if (ctx.mediaType !== "tv") return tvClassifyResult("movie", 0, "notTv");
@@ -2965,6 +2978,9 @@ function summarizeSubtitlePipeline(sortCtx, sorted, finalList, debugCounts) {
     return { total: items.length, byProvider, byTvMatch, byProviderTvMatch };
   };
 
+  /** Keeps JSON.stringify + transfer size bounded on heavy HTML / attempt traces. */
+  const capArr = (arr, max = 64) => (Array.isArray(arr) && arr.length > max ? arr.slice(0, max) : arr || []);
+
   return {
     tvQueryMode: sortCtx.tvQueryMode || null,
     rawFetched: {
@@ -2977,7 +2993,7 @@ function summarizeSubtitlePipeline(sortCtx, sorted, finalList, debugCounts) {
       request: debugCounts.subdlRequestEcho || null,
       rawRows: debugCounts.subdlRaw,
       mappedRows: debugCounts.subdlMapped,
-      attempts: debugCounts.subdlTvAttempts || [],
+      attempts: capArr(debugCounts.subdlTvAttempts, 48),
       winningProbe: debugCounts.subdlWinningProbe || null,
       seasonBroadMergedLangs: debugCounts.subdlSeasonBroadMergedLangs || {},
       htmlFallbackUsed: Boolean(debugCounts.subdlHtmlFallbackUsed),
@@ -2993,14 +3009,14 @@ function summarizeSubtitlePipeline(sortCtx, sorted, finalList, debugCounts) {
       htmlResolverFailureReason: debugCounts.subdlHtmlResolverFailureReason || null,
       htmlResolverRequestedTitleNormalized:
         debugCounts.subdlHtmlResolverRequestedTitleNormalized || null,
-      htmlResolverCandidateEvaluations: debugCounts.subdlHtmlResolverCandidateEvaluations || [],
+      htmlResolverCandidateEvaluations: capArr(debugCounts.subdlHtmlResolverCandidateEvaluations, 40),
       htmlResolverSelectionStrategy: debugCounts.subdlHtmlResolverSelectionStrategy || null,
-      htmlCandidateUrlsTried: debugCounts.subdlHtmlCandidateUrlsTried || [],
-      htmlFetchStatus: debugCounts.subdlHtmlFetchStatus || [],
+      htmlCandidateUrlsTried: capArr(debugCounts.subdlHtmlCandidateUrlsTried, 48),
+      htmlFetchStatus: capArr(debugCounts.subdlHtmlFetchStatus, 48),
       htmlAnyCandidateReturnedHtml: Boolean(debugCounts.subdlHtmlAnyCandidateReturnedHtml),
       htmlParserStageCounts: debugCounts.subdlHtmlParserStageCounts || {},
-      htmlHeaderSnippets: debugCounts.subdlHtmlHeaderSnippets || [],
-      htmlRowSnippets: debugCounts.subdlHtmlRowSnippets || [],
+      htmlHeaderSnippets: capArr(debugCounts.subdlHtmlHeaderSnippets, 32),
+      htmlRowSnippets: capArr(debugCounts.subdlHtmlRowSnippets, 32),
       htmlRowsFound: Number(debugCounts.subdlHtmlRowsFound || 0),
       htmlByLang: debugCounts.subdlHtmlByLang || {},
       htmlLanguageHeaderLabels: debugCounts.subdlHtmlLanguageHeaderLabels || [],
@@ -3030,7 +3046,7 @@ function summarizeSubtitlePipeline(sortCtx, sorted, finalList, debugCounts) {
       episodeHtmlRowsFound: Number(debugCounts.episodeHtmlRowsFound || 0),
       episodeHtmlExactKeptRows: Number(debugCounts.episodeHtmlExactKeptRows || 0),
       episodeHtmlRejectedRows: Number(debugCounts.episodeHtmlRejectedRows || 0),
-      exactEpisodeEvidenceSamples: debugCounts.exactEpisodeEvidenceSamples || [],
+      exactEpisodeEvidenceSamples: capArr(debugCounts.exactEpisodeEvidenceSamples, 24),
       episodeHtmlRecognized5x08Style: Boolean(debugCounts.episodeHtmlRecognized5x08Style),
       byLangAfterMap: debugCounts.subdlByLangAfterMap || {},
       afterDedupeCount: debugCounts.subdlCountAfterDedupe,
@@ -3039,14 +3055,14 @@ function summarizeSubtitlePipeline(sortCtx, sorted, finalList, debugCounts) {
       byLangAfterSort: debugCounts.subdlByLangAfterSort || {},
       byTvMatchAfterSort: debugCounts.subdlByTvMatchAfterSort || {},
       subdlByProbeAfterSort: debugCounts.subdlByProbeAfterSort || {},
-      subdlClassifySamples: debugCounts.subdlClassifySamples || [],
+      subdlClassifySamples: capArr(debugCounts.subdlClassifySamples, 12),
       pipelineCacheRev: SUBTITLES_PIPELINE_CACHE_REV,
       afterTvFilterCount: debugCounts.subdlCountAfterTvFilter,
       byLangAfterTvFilter: debugCounts.subdlByLangAfterTvFilter || {},
       byTvMatchAfterTvFilter: debugCounts.subdlByTvMatchAfterTvFilter || {}
     },
     opensubtitlesTrace: {
-      attempts: debugCounts.opensubtitlesMovieAttempts || [],
+      attempts: capArr(debugCounts.opensubtitlesMovieAttempts, 48),
       rawRows: Number(debugCounts.opensubtitlesRaw || 0),
       mappedRows: Number(debugCounts.opensubtitlesMapped || 0),
       tvFetchedBeforeIdentity: Number(debugCounts.opensubtitlesTvFetchedBeforeIdentity || 0),
@@ -3054,7 +3070,7 @@ function summarizeSubtitlePipeline(sortCtx, sorted, finalList, debugCounts) {
       tvRejectedSeasonMismatch: Number(debugCounts.opensubtitlesTvRejectedSeasonMismatch || 0),
       tvRejectedEpisodeMismatch: Number(debugCounts.opensubtitlesTvRejectedEpisodeMismatch || 0),
       tvKeptAfterIdentity: Number(debugCounts.opensubtitlesTvKeptAfterIdentity || 0),
-      tvRejectedSamples: debugCounts.opensubtitlesTvRejectedSamples || [],
+      tvRejectedSamples: capArr(debugCounts.opensubtitlesTvRejectedSamples, 40),
       requestedShowTitleNormalized: debugCounts.opensubtitlesRequestedShowTitleNormalized || null,
       tvKeptAfterIdentityByField: debugCounts.opensubtitlesTvIdentityAcceptByField || {}
     },
@@ -3165,75 +3181,78 @@ export function buildProviderHealthSummary({
   };
 }
 
-function sortSubtitles(items, ctx = {}, debugCounts = null) {
+/**
+ * First SubDL rows (dedupe order) that match the episode-chain probe sample rule.
+ * Must not run inside sort — diagnostics/trace must never change ranking.
+ */
+export function collectSubdlClassifySamplesForDiagnostics(deduped, ctx) {
   const samples = [];
-  const wantTrace = Boolean(ctx.includeClassificationTrace && debugCounts);
-  const maxSamples = wantTrace ? 3 : 0;
+  if (!deduped?.length || ctx.mediaType !== "tv") return samples;
+  const maxSamples = 3;
+  for (const item of deduped) {
+    if (samples.length >= maxSamples) break;
+    if (String(item.provider || "") !== "subdl") continue;
+    const classified = classifyTvSubtitleMatch(item, ctx);
+    const ctxS = parseOptionalEpisodeNumber(ctx.season);
+    const ctxE = parseOptionalEpisodeNumber(ctx.episode);
+    const seasonBrowse =
+      ctx.mediaType === "tv" &&
+      (ctx.tvQueryMode === "season" ||
+        (ctx.tvQueryMode !== "episode" && ctxE == null));
+    const subdlProbeResolved = String(item.subdlProbe || ctx.subdlWinningProbe || "").trim();
+    const probeImpliesSeasonPack =
+      subdlProbeResolved === "seasonFullSeasonTmdb" || subdlProbeResolved === "filmNameSeasonFull";
+    const probeImpliesSeasonScoped =
+      subdlProbeResolved === "seasonOnlyTmdb" || subdlProbeResolved === "filmNameSeasonOnly";
+    if (!seasonBrowse && (probeImpliesSeasonPack || probeImpliesSeasonScoped)) {
+      const releaseText = releaseTextBundle(item);
+      const parsed = parseSeasonEpisodeFromReleaseText(releaseText);
+      const metaS = parseOptionalEpisodeNumber(item.season);
+      const metaE = parseOptionalEpisodeNumber(item.episode);
+      const packHint = seasonPackHintsInText(releaseText, ctxS);
+      const exactEpisodeEvidence =
+        (parsed.episode != null && parsed.episode === ctxE) ||
+        (metaE != null &&
+          metaE === ctxE &&
+          (parsed.episode == null || parsed.episode === metaE));
+      const strongContradictionReason = subdlFallbackProbeContradictionReason(parsed, metaS, metaE, ctxS, ctxE);
+      samples.push({
+        provider: String(item.provider || ""),
+        subdlProbe: item.subdlProbe ?? null,
+        classifyBranch: classified.classifyBranch,
+        tvMatchKind: classified.tvMatchKind,
+        parsedSeason: parsed.season,
+        parsedEpisode: parsed.episode,
+        seasonMatchQuality: parsed.seasonMatchQuality ?? null,
+        episodeMatchQuality: parsed.episodeMatchQuality ?? null,
+        metaSeason: metaS,
+        metaEpisode: metaE,
+        metaSeasonRaw: item.season ?? "",
+        metaEpisodeRaw: item.episode ?? "",
+        ctxSubdlWinningProbe: ctx.subdlWinningProbe ?? null,
+        subdlProbeResolved: subdlProbeResolved || null,
+        ctxSeason: ctx.season,
+        ctxEpisode: ctx.episode,
+        ctxS,
+        ctxE,
+        tvQueryMode: ctx.tvQueryMode ?? null,
+        packHint,
+        exactEpisodeEvidence,
+        strongContradiction: Boolean(strongContradictionReason),
+        strongContradictionReason,
+        releaseNameSample: String(item.releaseName || "").slice(0, 120),
+        pipelineCacheRev: SUBTITLES_PIPELINE_CACHE_REV
+      });
+    }
+  }
+  return samples;
+}
 
+export function sortSubtitles(items, ctx = {}) {
   const scored = items.map((item) => {
     const classified = classifyTvSubtitleMatch(item, ctx);
-    if (
-      maxSamples > 0 &&
-      samples.length < maxSamples &&
-      String(item.provider || "") === "subdl"
-    ) {
-      const ctxS = parseOptionalEpisodeNumber(ctx.season);
-      const ctxE = parseOptionalEpisodeNumber(ctx.episode);
-      const seasonBrowse =
-        ctx.mediaType === "tv" &&
-        (ctx.tvQueryMode === "season" ||
-          (ctx.tvQueryMode !== "episode" && ctxE == null));
-      const subdlProbeResolved = String(item.subdlProbe || ctx.subdlWinningProbe || "").trim();
-      const probeImpliesSeasonPack =
-        subdlProbeResolved === "seasonFullSeasonTmdb" || subdlProbeResolved === "filmNameSeasonFull";
-      const probeImpliesSeasonScoped =
-        subdlProbeResolved === "seasonOnlyTmdb" || subdlProbeResolved === "filmNameSeasonOnly";
-      if (!seasonBrowse && (probeImpliesSeasonPack || probeImpliesSeasonScoped)) {
-        const releaseText = releaseTextBundle(item);
-        const parsed = parseSeasonEpisodeFromReleaseText(releaseText);
-        const metaS = parseOptionalEpisodeNumber(item.season);
-        const metaE = parseOptionalEpisodeNumber(item.episode);
-        const packHint = seasonPackHintsInText(releaseText, ctxS);
-        const exactEpisodeEvidence =
-          (parsed.episode != null && parsed.episode === ctxE) ||
-          (metaE != null &&
-            metaE === ctxE &&
-            (parsed.episode == null || parsed.episode === metaE));
-        const strongContradictionReason = subdlFallbackProbeContradictionReason(parsed, metaS, metaE, ctxS, ctxE);
-        samples.push({
-          provider: String(item.provider || ""),
-          subdlProbe: item.subdlProbe ?? null,
-          classifyBranch: classified.classifyBranch,
-          tvMatchKind: classified.tvMatchKind,
-          parsedSeason: parsed.season,
-          parsedEpisode: parsed.episode,
-          seasonMatchQuality: parsed.seasonMatchQuality ?? null,
-          episodeMatchQuality: parsed.episodeMatchQuality ?? null,
-          metaSeason: metaS,
-          metaEpisode: metaE,
-          metaSeasonRaw: item.season ?? "",
-          metaEpisodeRaw: item.episode ?? "",
-          ctxSubdlWinningProbe: ctx.subdlWinningProbe ?? null,
-          subdlProbeResolved: subdlProbeResolved || null,
-          ctxSeason: ctx.season,
-          ctxEpisode: ctx.episode,
-          ctxS,
-          ctxE,
-          tvQueryMode: ctx.tvQueryMode ?? null,
-          packHint,
-          exactEpisodeEvidence,
-          strongContradiction: Boolean(strongContradictionReason),
-          strongContradictionReason,
-          releaseNameSample: String(item.releaseName || "").slice(0, 120),
-          pipelineCacheRev: SUBTITLES_PIPELINE_CACHE_REV
-        });
-      }
-    }
     return scoreWithBreakdown(item, ctx, classified);
   });
-  if (wantTrace && debugCounts && samples.length) {
-    debugCounts.subdlClassifySamples = samples;
-  }
   return scored.sort((a, b) => {
     const ta = Number(a.tvMatchTier || 0);
     const tb = Number(b.tvMatchTier || 0);
@@ -3261,7 +3280,7 @@ export async function aggregateSubtitles({
   provider = "all",
   fileName = "",
   tvQueryMode = null,
-  includeClassificationTrace = false
+  includeDiagnostics = false
 }) {
   const providerFilter = normalizeProviderFilter(provider);
   const requested = providerFilter === "all" ? ["subdl", "opensubtitles"] : [providerFilter];
@@ -4776,10 +4795,14 @@ export async function aggregateSubtitles({
     subdlWinningProbe:
       mediaType === "tv" && debugCounts.subdlWinningProbe
         ? String(debugCounts.subdlWinningProbe)
-        : null,
-    includeClassificationTrace: Boolean(includeClassificationTrace) && mediaType === "tv"
+        : null
   };
-  const sorted = sortSubtitles(deduped, sortCtx, debugCounts);
+  if (includeDiagnostics) {
+    debugCounts.subdlClassifySamples = collectSubdlClassifySamplesForDiagnostics(deduped, sortCtx);
+  } else {
+    debugCounts.subdlClassifySamples = [];
+  }
+  const sorted = sortSubtitles(deduped, sortCtx);
   const subdlSorted = sorted.filter((s) => String(s.provider || "") === "subdl");
   debugCounts.subdlCountAfterSort = subdlSorted.length;
   debugCounts.subdlByLangAfterSort = countByNormalizedSubtitleLang(subdlSorted);
@@ -4824,7 +4847,7 @@ export async function aggregateSubtitles({
       compareHintAr:
         "في وضع الموسم (بدون episode): الخادم يعيد كل ما يخص نفس الموسم عبر seasonPack + seasonScoped (يشمل الصفوف العامة وصفوف حلقات نفس الموسم).",
       subdlProbeNoteAr:
-        "كل صف SubDL يحمل subdlProbe عند الجمع ثم يُزال من JSON. عند diagnostics=1 راجع subdlTrace.subdlClassifySamples و pipelineCacheRev (مفتاح الكاش يتغيّر مع rev — لا استجابة قديمة بعد تعديل الكود).",
+        "كل صف SubDL يحمل subdlProbe عند الجمع ثم يُزال من JSON. راجع subdlTrace.subdlClassifySamples عند diagnostics=1؛ مفتاح كاش الترجمات لا يعتمد على diagnostics.",
       subdlByProbeAfterSort: debugCounts.subdlByProbeAfterSort || {}
     };
   } else {
@@ -4841,7 +4864,9 @@ export async function aggregateSubtitles({
     }
   }
 
-  const diagnostics = summarizeSubtitlePipeline(sortCtx, sorted, finalList, debugCounts);
+  const diagnostics = includeDiagnostics
+    ? summarizeSubtitlePipeline(sortCtx, sorted, finalList, debugCounts)
+    : null;
   const providerHealth = buildProviderHealthSummary({
     providerFilter,
     requested,

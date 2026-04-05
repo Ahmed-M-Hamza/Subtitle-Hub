@@ -49,7 +49,8 @@
     </script>
     <script>
       (function () {
-        var img = location.origin + "/og-image.png";
+        /* Use real favicon until a dedicated 1200×630 PNG exists (see docs/launch-observation.md). */
+        var img = location.origin + "/favicon.svg";
         function ensure(attr, key, val) {
           var el = document.querySelector("meta[" + attr + '="' + key + '"]');
           if (!el) {
@@ -61,8 +62,6 @@
         }
         ensure("property", "og:image", img);
         ensure("name", "twitter:image", img);
-        ensure("property", "og:image:width", "1200");
-        ensure("property", "og:image:height", "630");
       })();
     </script>
   </head>
@@ -149,11 +148,11 @@
           setMeta('meta[property="og:description"]', "content", T.ogDesc);
           setMeta('meta[property="og:locale"]', "content", isAr ? "ar_AR" : "en_US");
           setMeta('meta[property="og:url"]', "content", window.location.origin + "/");
-          setMeta('meta[property="og:image"]', "content", window.location.origin + "/og-image.png");
+          setMeta('meta[property="og:image"]', "content", window.location.origin + "/favicon.svg");
           setMeta('meta[property="og:image:alt"]', "content", "Subtitle Hub");
           setMeta('meta[name="twitter:title"]', "content", T.ogTitle);
           setMeta('meta[name="twitter:description"]', "content", T.ogDesc);
-          setMeta('meta[name="twitter:image"]', "content", window.location.origin + "/og-image.png");
+          setMeta('meta[name="twitter:image"]', "content", window.location.origin + "/favicon.svg");
           var bt = document.getElementById("brandTagline");
           if (bt) bt.textContent = T.brandTagline || "";
           var sb = document.getElementById("siteBrand");

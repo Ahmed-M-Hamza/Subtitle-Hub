@@ -1,6 +1,7 @@
 /**
  * Subtitle Hub product analytics — pluggable adapters, privacy-minded payloads.
  * Debug logging: localStorage subtitlehub.analyticsDebug=1, or ?analyticsDebug=1, or localhost.
+ * Reporting plan (dashboards, KPIs, funnels): docs/analytics-reporting.md
  */
 
 const adapters = [];
@@ -111,6 +112,8 @@ export const AnalyticsEvent = {
   RECENT_SEARCH_CLICKED: "recent_search_clicked",
   MEDIA_PAGE_VIEWED: "media_page_viewed",
   SUBTITLES_PAGE_VIEWED: "subtitles_page_viewed",
+  /** Subtitle API fetch threw or non-OK before any rows rendered (hard failure). */
+  SUBTITLES_LOAD_FAILED: "subtitles_load_failed",
   SUBTITLE_FILTERS_CHANGED: "subtitle_filters_changed",
   SUBTITLE_LANGUAGE_FILTER_CHANGED: "subtitle_language_filter_changed",
   SUBTITLE_PROVIDER_FILTER_CHANGED: "subtitle_provider_filter_changed",

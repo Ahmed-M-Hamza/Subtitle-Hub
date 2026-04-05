@@ -18,7 +18,8 @@
     "test:e2e:ui": "playwright test --ui",
     "smoke": "node tests/smoke.mjs",
     "smoke:local": "BASE_URL=http://localhost:8888 node tests/smoke.mjs",
-    "smoke:diag": "SMOKE_DIAGNOSTICS=1 node tests/smoke.mjs"
+    "smoke:diag": "SMOKE_DIAGNOSTICS=1 node tests/smoke.mjs",
+    "smoke:parity": "node tests/subtitles-diagnostics-parity-smoke.mjs"
   },
   "dependencies": {
     "dotenv": "^17.3.1"

@@ -268,6 +268,7 @@ const UI_TEXT = {
     openSubtitlesQuotaReached:
       "تم الوصول إلى الحد اليومي لتحميل OpenSubtitles حاليًا. جرّب مصدرًا آخر أو أعد المحاولة لاحقًا.",
     openSubtitlesResolving: "جارٍ جلب رابط التحميل…",
+    openSubtitlesPreparingDownload: "جارٍ تجهيز الملف…",
     openSubtitlesNoFileId: "لا يتوفر معرّف ملف صالح لهذه الترجمة من OpenSubtitles.",
     sourceTrustHigh: "مصدر موثوق",
     subtitleCardsInSection: "ترجمات",
@@ -615,6 +616,7 @@ const UI_TEXT = {
     openSubtitlesQuotaReached:
       "OpenSubtitles download quota has been reached for now. Try another source or try again later.",
     openSubtitlesResolving: "Fetching download link…",
+    openSubtitlesPreparingDownload: "Preparing file…",
     openSubtitlesNoFileId: "No valid OpenSubtitles file id for this row.",
     sourceTrustHigh: "Trusted source",
     subtitleCardsInSection: "subtitles",
@@ -1652,6 +1654,136 @@ function showAppToast(message, variant = "error") {
   }, 8000);
 }
 
+function slugifySubtitleFilenameBase(raw) {
+  const s0 = String(raw || "").trim() || "subtitle";
+  const s1 = s0.replace(/\.(srt|vtt|ass|ssa|sub|zip|txt)$/i, "");
+  const slug = s1
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .replace(/-{2,}/g, "-");
+  return (slug || "subtitle").slice(0, 100);
+}
+
+function opensubtitlesDownloadFilenameBaseFromSub(sub) {
+  const name = sub?.releaseName || sub?.release_name || sub?.release || "";
+  return slugifySubtitleFilenameBase(name);
+}
+
+function parseFilenameFromContentDisposition(cd) {
+  if (!cd || typeof cd !== "string") return "";
+  const star = /filename\*\s*=\s*UTF-8''([^;\s]+)/i.exec(cd);
+  if (star) {
+    try {
+      return decodeURIComponent(star[1].replace(/["']/g, ""));
+    } catch {
+      /* ignore */
+    }
+  }
+  const quoted = /filename\s*=\s*"((?:\\.|[^"\\])*)"/i.exec(cd);
+  if (quoted) return quoted[1].replace(/\\(.)/g, "$1");
+  const plain = /filename\s*=\s*([^;\s]+)/i.exec(cd);
+  if (plain) return plain[1].replace(/^["']|["']$/g, "");
+  return "";
+}
+
+function extFromUrlPathname(pathname) {
+  const m = String(pathname || "").match(/\.(srt|vtt|ass|ssa|sub|zip|txt)(?:\?|#|$)/i);
+  return m ? m[1].toLowerCase() : "";
+}
+
+function extFromMimeType(ct, urlPath = "") {
+  const c = String(ct || "").toLowerCase();
+  if (c.includes("text/vtt")) return "vtt";
+  if (c.includes("application/x-subrip")) return "srt";
+  if (c.includes("text/srt")) return "srt";
+  if (c.includes("application/zip") || c.includes("application/x-zip")) return "zip";
+  if (c.includes("text/plain")) return extFromUrlPathname(urlPath) || "txt";
+  return "";
+}
+
+function inferSubtitleFileExtension(contentType, contentDisposition, downloadUrl) {
+  const cdName = parseFilenameFromContentDisposition(contentDisposition);
+  const cdExt = cdName.match(/\.([a-z0-9]{2,8})$/i);
+  if (cdExt) return cdExt[1].toLowerCase();
+  let path = "";
+  try {
+    path = new URL(downloadUrl).pathname;
+  } catch {
+    /* ignore */
+  }
+  const pathExt = extFromUrlPathname(path);
+  if (pathExt) return pathExt;
+  const mimeExt = extFromMimeType(contentType, path);
+  if (mimeExt) return mimeExt;
+  return "srt";
+}
+
+function subtitleDownloadBasename(name) {
+  const s = String(name || "").trim().replace(/\\/g, "/");
+  if (!s) return "";
+  const i = s.lastIndexOf("/");
+  return i >= 0 ? s.slice(i + 1) : s;
+}
+
+function sanitizeDownloadFilename(name) {
+  const s = String(name || "")
+    .replace(/[/\\?%*:|"<>]/g, "-")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 200);
+  return s || "subtitle.srt";
+}
+
+/**
+ * Single fetch → Blob → object URL → <a download>. Returns false on network/CORS/error so caller can open the URL in a tab.
+ */
+async function deliverOpensubtitlesResolvedDownload(downloadUrl, trigger) {
+  let res;
+  try {
+    res = await fetch(downloadUrl, { mode: "cors", credentials: "omit", cache: "no-store" });
+  } catch {
+    return false;
+  }
+  if (!res.ok) return false;
+
+  const contentType = res.headers.get("Content-Type") || "";
+  const contentDisposition = res.headers.get("Content-Disposition") || "";
+  const cdBase = subtitleDownloadBasename(parseFilenameFromContentDisposition(contentDisposition));
+
+  const baseAttr = String(trigger.getAttribute("data-opensubtitles-filename-base") || "").trim();
+  const preferredStem = baseAttr || "subtitle";
+  const langRaw = String(trigger.getAttribute("data-opensubtitles-lang") || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, "")
+    .slice(0, 14);
+  const defaultStem = langRaw ? `${preferredStem}_${langRaw}_opensubtitles` : `${preferredStem}_opensubtitles`;
+
+  let fileName;
+  if (cdBase && /\.[a-z0-9]{2,8}$/i.test(cdBase)) {
+    fileName = sanitizeDownloadFilename(cdBase);
+  } else {
+    const ext = inferSubtitleFileExtension(contentType, contentDisposition, downloadUrl);
+    const stemNoExt = cdBase ? sanitizeDownloadFilename(cdBase).replace(/\.[^.]+$/, "") : defaultStem;
+    fileName = sanitizeDownloadFilename(`${stemNoExt}.${ext}`);
+  }
+
+  const blob = await res.blob();
+  const objectUrl = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = objectUrl;
+  a.download = fileName;
+  a.rel = "noopener";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(objectUrl), 90_000);
+  return true;
+}
+
 async function runOpensubtitlesDownloadClick(trigger) {
   const fileId = String(trigger.getAttribute("data-opensubtitles-file-id") || "").trim();
   const labelEl = trigger.querySelector(".btn-download-primary__label") || trigger;
@@ -1692,15 +1824,20 @@ async function runOpensubtitlesDownloadClick(trigger) {
           actionKind: "best_pick_download"
         });
       }
+      labelEl.textContent = t("openSubtitlesPreparingDownload");
+      const blobOk = await deliverOpensubtitlesResolvedDownload(data.downloadUrl, trigger);
       trackProductEvent(AnalyticsEvent.SUBTITLE_DOWNLOAD_RESOLVED, {
         ok: true,
         provider: "opensubtitles",
         opensubtitlesLinkKind: data.opensubtitlesLinkKind,
         opensubtitlesResolveOnClickUsed: Boolean(data.opensubtitlesResolveOnClickUsed),
         opensubtitlesResolveUsedFallback: Boolean(data.opensubtitlesResolveUsedFallback),
+        opensubtitlesBlobUsed: blobOk,
         actionKind: "opensubtitles_resolve"
       });
-      window.open(data.downloadUrl, "_blank", "noopener,noreferrer");
+      if (!blobOk) {
+        window.open(data.downloadUrl, "_blank", "noopener,noreferrer");
+      }
       return;
     }
     const failCode = String(data.code || "");
@@ -1819,10 +1956,8 @@ function updateDocumentMeta(route) {
   ensureMetaProperty("og:locale", uiLang === "ar" ? "ar_AR" : "en_US");
   const canonicalHref = `${location.origin}${canonicalPath}`;
   ensureMetaProperty("og:url", canonicalHref);
-  const ogImage = `${location.origin}/og-image.png`;
+  const ogImage = `${location.origin}/favicon.svg`;
   ensureMetaProperty("og:image", ogImage);
-  ensureMetaProperty("og:image:width", "1200");
-  ensureMetaProperty("og:image:height", "630");
   ensureMetaProperty("og:image:alt", t("metaOgImageAlt"));
   ensureMetaName("twitter:card", "summary_large_image");
   ensureMetaName("twitter:title", title);
@@ -3285,17 +3420,19 @@ function selectBestSubtitleRecommendation(filtered, ctx) {
 function renderOpensubtitlesDownloadControl(sub, { bestPick = false } = {}) {
   const fid = escapeHtml(String(sub.opensubtitlesFileId || "").trim());
   const src = escapeHtml(String(sub.opensubtitlesSourcePageUrl || "").trim());
+  const fnBase = escapeHtml(opensubtitlesDownloadFilenameBaseFromSub(sub));
+  const langHint = escapeHtml(String(sub.language || "").trim().slice(0, 24));
   const view = src
     ? `<a class="btn secondary btn-sm btn-view-source" href="${src}" target="_blank" rel="noopener noreferrer" data-analytics-view-source="1" data-provider="opensubtitles">${escapeHtml(t("viewSource"))}</a>`
     : "";
   if (bestPick) {
     return `<div class="subtitle-best-pick__cta-row row-actions">
-      <button type="button" class="btn subtitle-best-pick__cta" data-download="1" data-best-pick="1" data-provider="opensubtitles" data-os-download="1" data-opensubtitles-file-id="${fid}" data-opensubtitles-source-page="${src}">${escapeHtml(t("downloadSubtitle"))}</button>
+      <button type="button" class="btn subtitle-best-pick__cta" data-download="1" data-best-pick="1" data-provider="opensubtitles" data-os-download="1" data-opensubtitles-file-id="${fid}" data-opensubtitles-source-page="${src}" data-opensubtitles-filename-base="${fnBase}" data-opensubtitles-lang="${langHint}">${escapeHtml(t("downloadSubtitle"))}</button>
       ${view}
     </div>`;
   }
   return `<div class="sub-item__action-row">
-    <button type="button" class="btn btn-download-primary" data-download="1" data-provider="opensubtitles" data-os-download="1" data-opensubtitles-file-id="${fid}" data-opensubtitles-source-page="${src}">
+    <button type="button" class="btn btn-download-primary" data-download="1" data-provider="opensubtitles" data-os-download="1" data-opensubtitles-file-id="${fid}" data-opensubtitles-source-page="${src}" data-opensubtitles-filename-base="${fnBase}" data-opensubtitles-lang="${langHint}">
       <span class="btn-download-primary__label">${escapeHtml(t("downloadSubtitle"))}</span>
     </button>
     ${view}
@@ -4728,6 +4865,7 @@ async function renderSubtitles(route) {
         hi: form.hiFilter.value,
         fileName: effectiveFileName
       });
+      const textTrim = (form.text.value || "").trim();
       trackProductEvent(AnalyticsEvent.SUBTITLE_FILTERS_CHANGED, {
         ...subtitlesViewContext(route, {
           tvQueryMode: tvQueryModeFromApi,
@@ -4736,6 +4874,10 @@ async function renderSubtitles(route) {
           provider: form.providerFilter.value,
           sort: form.sort.value,
           hi: form.hiFilter.value,
+          resolution: form.resolutionFilter.value,
+          source: form.sourceFilter.value,
+          codec: form.codecFilter.value,
+          textFilterLength: textTrim.length,
           hasFilename: Boolean(effectiveFileName),
           tvKinds: route.mediaType === "tv" ? [...tvKindSelection].join(",") : undefined,
           resultCount: filtered.length,
@@ -5067,6 +5209,10 @@ async function renderSubtitles(route) {
     syncTvMatchChips();
     apply(true);
   } catch {
+    trackProductEvent(AnalyticsEvent.SUBTITLES_LOAD_FAILED, {
+      ...subtitlesViewContext(route, { tvQueryMode: null }),
+      actionKind: "subtitles_fetch_error"
+    });
     subtitleDevDiagnosticsCopySnapshot = null;
     count.textContent = "";
     const subErrActions = media

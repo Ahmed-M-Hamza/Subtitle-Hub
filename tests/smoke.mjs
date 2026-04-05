@@ -8,6 +8,7 @@
  *
  * Optional:
  *   SMOKE_DIAGNOSTICS=1     — append diagnostics=1 to subtitle requests (slower); assert pipeline shapes.
+ *   npm run smoke:parity    — subtitles route: same JSON with and without diagnostics=1 (see subtitles-diagnostics-parity-smoke.mjs).
  *   SMOKE_TV_TMDB_ID=1396   — override TV show TMDb id (default: Breaking Bad).
  *   SMOKE_MOVIE_TMDB_ID=157336 — override movie id for provider/language matrix (default: Interstellar).
  *

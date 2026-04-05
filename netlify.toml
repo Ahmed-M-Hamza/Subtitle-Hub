@@ -8,6 +8,11 @@
 [functions]
   node_bundler = "esbuild"
 
+# Subtitle aggregation (especially TV season scope + diagnostics=1) can exceed the Netlify Dev default
+# (30s) while providers and HTML fallbacks run. Align with platform sync limits where possible.
+[functions.subtitles]
+  timeout = 60
+
 [dev]
   publish = "public"
   functions = "netlify/functions"
